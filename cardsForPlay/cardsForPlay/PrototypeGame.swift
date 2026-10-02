@@ -1,5 +1,6 @@
 import Foundation
 import MahjongAI
+import MahjongProgress
 import MahjongRules
 
 struct RoundResult: Codable {
@@ -9,6 +10,18 @@ struct RoundResult: Codable {
   let deltas: [Int]
 
   var isDraw: Bool { winner == nil }
+}
+
+enum AppRoute: Equatable {
+  case home
+  case table
+  case career
+  case stats
+  case achievements
+  case guides
+  case replays
+  case replay(UUID)
+  case help
 }
 private struct PrototypeSnapshot: Codable {
   let game: GameState
@@ -63,55 +76,190 @@ final class PrototypeGame: ObservableObject {
   @Published var showSettings = false
   @Published var aiDelay = 0.22
   @Published var selectedDifficulty = AIDifficulty.normal
-  @Published var showGameSetup = true
-  @Published private(set) var message = "正在开局…"
+  @Published var showGameSetup = false
+  @Published private(set) var message = "选择要玩的内容"
   @Published private(set) var aiDecisionLogs: [Int: AIDecisionLog] = [:]
+  @Published private(set) var library = ProgressLibrary()
+  @Published var route: AppRoute = .home
+  @Published var highlightedFan: Int?
+  @Published private(set) var careerNote: String?
+  @Published private(set) var lastRecordID: UUID?
 
   private var driveTask: Task<Void, Never>?
+  private var handSeed: UInt64 = 0
+  private var steps: [ReplayStep] = []
+  private var canReplay = true
+  private var sessionActive = false
+  private var pendingMode = PlayMode.quick
+  private var lastMethod: WinMethod?
+  var mode = PlayMode.quick
+  var careerLevelID: String?
+  var practiceHints = false
 
   init() {
     if ProcessInfo.processInfo.arguments.contains("-reset-prototype") {
-      try? FileManager.default.removeItem(at: Self.snapshotURL)
+      try? FileManager.default.removeItem(at: Self.storageDirectory)
     }
-    if let snapshot = Self.loadSnapshot() {
-      game = snapshot.game
-      cumulativeScores = snapshot.cumulativeScores
-      result = snapshot.result
-      aiDelay = snapshot.aiDelay
-      selectedDifficulty = snapshot.difficulty
-      showGameSetup = false
-      message = snapshot.result == nil ? "已恢复上次牌局" : "已恢复结算"
+    library = ProgressArchive.load(from: Self.storageDirectory)
+    if library.session == nil, let legacy = Self.loadLegacy() {
+      library.session = Self.migrated(legacy)
+      try? ProgressArchive.save(library, to: Self.storageDirectory)
+      try? FileManager.default.removeItem(at: Self.legacySnapshotURL)
+    }
+    if let session = library.session {
+      restore(session)
+      message = session.winner == nil && !session.drawn ? "可以继续上次牌局" : "上次牌局已经结束"
     } else {
-      game = GameState(seed: Self.freshSeed())
+      game = GameState(seed: 0)
     }
-    if !showGameSetup { scheduleDrive() }
+    route = .home
   }
 
   deinit {
     driveTask?.cancel()
   }
 
-  func newGame() {
+  var setupTitle: String {
+    switch pendingMode {
+    case .practice: return "练习一盘"
+    case .career: return "生涯关卡"
+    case .full: return "完整对局"
+    case .quick: return "选择电脑难度"
+    }
+  }
+
+  var setupButtonTitle: String {
+    pendingMode == .practice ? "开始练习" : "开始一盘"
+  }
+
+  var tableLabel: String {
+    if let careerLevelID, let level = CareerCatalog.level(id: careerLevelID) {
+      return "\(level.chapter)-\(level.index) \(level.title)"
+    }
+    return mode.displayName
+  }
+
+  var practiceAdvice: [ReplayAdvice] {
+    guard practiceHints, case .awaitingDiscard(seat: 0) = game.phase else { return [] }
+    return HandReplay.advice(state: game, difficulty: .normal, scores: cumulativeScores)
+  }
+
+  var practiceAdviceText: String {
+    let tips = practiceAdvice.map {
+      "\($0.tile.displayName) 效\($0.efficiency) 危\($0.dangerLabel)"
+    }.joined(separator: " · ")
+    let unseen: String
+    if let selectedTile {
+      let count = PublicInfo.unseenCount(state: game, kind: selectedTile.kind)
+      unseen = "\(selectedTile.kind.displayName)未见\(count)"
+    } else {
+      unseen = "点牌可看未见张数"
+    }
+    return "练习（只看公开牌）\(tips) \(unseen)"
+  }
+
+  var lastRecordCanReplay: Bool {
+    guard let lastRecordID else { return false }
+    return library.records.first { $0.id == lastRecordID }?.canReplay == true
+  }
+
+  func beginSetup(mode: PlayMode) {
     driveTask?.cancel()
-    result = nil
-    actions = []
-    selectedTile = nil
-    isPaused = false
+    pendingMode = mode
     showGameSetup = true
+    route = .table
+    message = "请选择电脑难度"
+  }
+
+  func beginCareer(_ level: CareerLevel) {
+    guard level.playable else { return }
+    pendingMode = .career
+    careerLevelID = level.id
+    practiceHints = false
+    selectedDifficulty = level.difficulty
+    startGame(difficulty: level.difficulty)
+  }
+
+  func continueGame() {
+    guard let session = library.session else { return }
+    restore(session)
+    showGameSetup = false
+    route = .table
+    message = result == nil ? "已恢复上次牌局" : "已恢复结算"
+    if result == nil, !isPaused { scheduleDrive() }
+  }
+
+  func returnHome() {
+    driveTask?.cancel()
+    isPaused = false
+    if showGameSetup {
+      showGameSetup = false
+      if let session = library.session {
+        restore(session)
+      }
+    } else {
+      persist()
+    }
+    route = .home
+  }
+
+  func openReplay(_ id: UUID) {
+    highlightedFan = nil
+    route = .replay(id)
+  }
+
+  func deleteRecord(_ id: UUID) {
+    library.records.removeAll { $0.id == id }
+    if lastRecordID == id { lastRecordID = nil }
+    persist()
+  }
+
+  func updateAudio(_ audio: AudioSettings) {
+    library.audio = audio
+    TableSound.shared.sync(audio)
+    persist()
+  }
+
+  func updateAudioVolume(_ keyPath: WritableKeyPath<AudioSettings, Double>, _ value: Double) {
+    var audio = library.audio
+    audio[keyPath: keyPath] = value
+    updateAudio(audio)
+  }
+
+  func newGame() {
+    if mode == .career, let careerLevelID, let level = CareerCatalog.level(id: careerLevelID) {
+      beginCareer(level)
+      return
+    }
+    driveTask?.cancel()
+    showGameSetup = true
+    pendingMode = mode == .practice ? .practice : .quick
     message = "请选择电脑难度"
   }
 
   func startGame(difficulty: AIDifficulty) {
     driveTask?.cancel()
     selectedDifficulty = difficulty
-    game = GameState(seed: Self.freshSeed())
+    mode = pendingMode
+    if mode != .career { careerLevelID = nil }
+    practiceHints = mode == .practice
+    handSeed = Self.freshSeed()
+    game = GameState(seed: handSeed)
+    steps = []
+    canReplay = true
     result = nil
+    lastMethod = nil
+    careerNote = nil
+    lastRecordID = nil
     actions = []
     selectedTile = nil
     isPaused = false
     showGameSetup = false
+    sessionActive = true
     aiDecisionLogs = [:]
+    cumulativeScores = [0, 0, 0, 0]
     message = "\(difficulty.displayName)难度开局，你是东家"
+    TableSound.shared.sync(library.audio)
     persist()
     scheduleDrive()
   }
@@ -290,9 +438,12 @@ final class PrototypeGame: ObservableObject {
   private func performHumanWin() throws {
     switch game.phase {
     case .awaitingDiscard(seat: 0):
-      guard let score = selfDrawScore(seat: 0) else { return }
-      _ = game.adjudicateWinDeclaration(seat: 0, context: selfDrawContext(seat: 0)!)
-      finishWin(winner: 0, discarder: nil, score: score)
+      guard let context = selfDrawContext(seat: 0), let score = selfDrawScore(seat: 0) else {
+        return
+      }
+      steps.append(.declareWin(seat: 0))
+      _ = game.adjudicateWinDeclaration(seat: 0, context: context)
+      finishWin(winner: 0, discarder: nil, score: score, method: context.method)
 
     case let .awaitingResponses(discarder, tile):
       guard legalScore(seat: 0, tile: tile.kind, method: .discard) != nil else { return }
@@ -435,7 +586,7 @@ final class PrototypeGame: ObservableObject {
     if case let .endedWin(winner) = game.phase,
       let score = legalScore(seat: winner, tile: tile.kind, method: method)
     {
-      finishWin(winner: winner, discarder: discarder, score: score)
+      finishWin(winner: winner, discarder: discarder, score: score, method: method)
     }
   }
 
@@ -444,73 +595,22 @@ final class PrototypeGame: ObservableObject {
       let score = MCRScorer.score(context),
       score.isLegalWin
     else { return false }
+    steps.append(.declareWin(seat: seat))
     _ = game.adjudicateWinDeclaration(seat: seat, context: context)
-    finishWin(winner: seat, discarder: nil, score: score)
+    finishWin(winner: seat, discarder: nil, score: score, method: context.method)
     return true
   }
 
   private func selfDrawScore(seat: Int) -> ScoreResult? {
-    guard let context = selfDrawContext(seat: seat),
-      let score = MCRScorer.score(context),
-      score.isLegalWin
-    else { return nil }
-    return score
+    WinContextBuilder.selfDrawScore(state: game, seat: seat)
   }
 
   private func selfDrawContext(seat: Int) -> WinContext? {
-    let winningTile: TileKind
-    if case let .drew(drawnSeat, tile) = game.events.last, drawnSeat == seat {
-      winningTile = tile.kind
-    } else if game.events.isEmpty, seat == 0, let tile = game.players[0].concealed.last {
-      winningTile = tile.kind
-    } else {
-      return nil
-    }
-    let player = game.players[seat]
-    return WinContext(
-      concealedTiles: player.concealed.map(\.kind),
-      melds: player.melds,
-      winningTile: winningTile,
-      method: selfDrawMethod(seat: seat),
-      seatWind: Wind(rawValue: seat)!,
-      roundWind: .east,
-      flowerCount: player.flowers.count,
-      isLastWallTile: game.wall.isEmpty
-    )
-  }
-
-  private func selfDrawMethod(seat: Int) -> WinMethod {
-    for event in game.events.dropLast().reversed() {
-      switch event {
-      case .exposedFlower:
-        continue
-      case let .declaredKong(kongSeat, _, _) where kongSeat == seat:
-        return .kongReplacement
-      case let .claimed(claimSeat, type, _)
-      where
-        claimSeat == seat && type == .exposedKong:
-        return .kongReplacement
-      default:
-        return .selfDraw
-      }
-    }
-    return .selfDraw
+    WinContextBuilder.selfDraw(state: game, seat: seat)
   }
 
   private func legalScore(seat: Int, tile: TileKind, method: WinMethod) -> ScoreResult? {
-    let player = game.players[seat]
-    let context = WinContext(
-      concealedTiles: player.concealed.map(\.kind) + [tile],
-      melds: player.melds,
-      winningTile: tile,
-      method: method,
-      seatWind: Wind(rawValue: seat)!,
-      roundWind: .east,
-      flowerCount: player.flowers.count,
-      isLastDiscard: game.wall.isEmpty
-    )
-    guard let score = MCRScorer.score(context), score.isLegalWin else { return nil }
-    return score
+    WinContextBuilder.legalScore(state: game, seat: seat, tile: tile, method: method)
   }
 
   private func aiDiscard(seat: Int) -> Tile {
@@ -544,23 +644,7 @@ final class PrototypeGame: ObservableObject {
   }
 
   private func publicDiscards() -> [[TileKind]] {
-    var rivers = Array(repeating: [TileKind](), count: 4)
-    var pendingSeat: Int?
-    for event in game.events {
-      switch event {
-      case let .discarded(seat, tile):
-        rivers[seat].append(tile.kind)
-        pendingSeat = seat
-      case .claimed:
-        if let seat = pendingSeat, !rivers[seat].isEmpty { rivers[seat].removeLast() }
-        pendingSeat = nil
-      case .drew:
-        pendingSeat = nil
-      default:
-        break
-      }
-    }
-    return rivers
+    PublicInfo.rivers(events: game.events)
   }
 
   private func aiDecisionSeed(seat: Int) -> UInt64 {
@@ -571,28 +655,117 @@ final class PrototypeGame: ObservableObject {
     AIDifficulty.allCases.firstIndex(of: selectedDifficulty) ?? 0
   }
 
-  private func finishWin(winner: Int, discarder: Int?, score: ScoreResult) {
+  private func finishWin(winner: Int, discarder: Int?, score: ScoreResult, method: WinMethod) {
     let deltas =
       (try? Settlement.win(
         winner: winner, discarder: discarder, fan: score.totalPoints
       )) ?? [0, 0, 0, 0]
     cumulativeScores = zip(cumulativeScores, deltas).map(+)
+    lastMethod = method
     result = RoundResult(winner: winner, discarder: discarder, score: score, deltas: deltas)
     actions = []
     message = "\(Self.playerNames[winner])和牌"
+    TableSound.shared.speak("和", settings: library.audio)
+    archiveFinished(
+      winner: winner, discarder: discarder, score: score, method: method, deltas: deltas,
+      drawn: false)
     persist()
   }
 
   private func finishDraw() {
-    result = RoundResult(winner: nil, discarder: nil, score: nil, deltas: [0, 0, 0, 0])
+    let deltas = [0, 0, 0, 0]
+    lastMethod = nil
+    result = RoundResult(winner: nil, discarder: nil, score: nil, deltas: deltas)
     actions = []
     message = "牌墙摸完，本局流局"
+    archiveFinished(
+      winner: nil, discarder: nil, score: nil, method: nil, deltas: deltas, drawn: true)
     persist()
+  }
+
+  private func archiveFinished(
+    winner: Int?,
+    discarder: Int?,
+    score: ScoreResult?,
+    method: WinMethod?,
+    deltas: [Int],
+    drawn: Bool
+  ) {
+    let counts = HandFacts.counts(events: game.events)
+    let exposed = game.players[0].melds.filter(\.isExposed).count
+    var replayable = canReplay
+    if replayable {
+      replayable = (try? HandReplay.state(seed: handSeed, steps: steps)) != nil
+    }
+    canReplay = replayable
+    let record = HandRecord(
+      mode: mode,
+      seed: handSeed,
+      difficulty: selectedDifficulty,
+      steps: steps,
+      canReplay: replayable,
+      winner: winner,
+      discarder: discarder,
+      winMethod: method,
+      fanPoints: score?.totalPoints ?? 0,
+      nonFlowerPoints: score?.nonFlowerPoints ?? 0,
+      awardFans: score?.awards.map(\.fan.rawValue) ?? [],
+      deltas: deltas,
+      chowCount: counts.chows,
+      pungCount: counts.pungs,
+      kongCount: counts.kongs,
+      concealedKongCount: counts.concealedKongs,
+      humanExposedMelds: exposed,
+      careerLevelID: careerLevelID
+    )
+    library.append(record)
+    lastRecordID = record.id
+    if mode == .career, let careerLevelID, let level = CareerCatalog.level(id: careerLevelID) {
+      let outcome = HandOutcome(
+        humanWon: winner == 0,
+        selfDrawn: winner == 0 && (method == .selfDraw || method == .kongReplacement),
+        dealtIn: discarder == 0,
+        drawn: drawn,
+        nonFlowerPoints: score?.nonFlowerPoints ?? 0,
+        awards: score?.awards.map(\.fan) ?? [],
+        exposedMelds: exposed,
+        kongs: counts.kongs,
+        concealedKongs: counts.concealedKongs
+      )
+      let earned = CareerGrader.stars(for: level, outcome: outcome)
+      careerNote = CareerGrader.hint(for: level, outcome: outcome)
+      library.career.bestStars[careerLevelID] = max(
+        library.career.bestStars[careerLevelID] ?? 0, earned)
+    } else {
+      careerNote = nil
+    }
   }
 
   private func apply(_ command: GameCommand) throws {
     try game.apply(command)
+    steps.append(.command(command))
+    if case .discard = command {
+      TableSound.shared.tap(library.audio)
+    }
+    speakLatestAction()
     persist()
+  }
+
+  private func speakLatestAction() {
+    guard let event = game.events.last else { return }
+    switch event {
+    case let .claimed(_, type, _):
+      switch type {
+      case .chow: TableSound.shared.speak("吃", settings: library.audio)
+      case .pung: TableSound.shared.speak("碰", settings: library.audio)
+      case .exposedKong: TableSound.shared.speak("杠", settings: library.audio)
+      case .win: break
+      }
+    case .declaredKong:
+      TableSound.shared.speak("杠", settings: library.audio)
+    default:
+      break
+    }
   }
 
   private func waitForAI() async {
@@ -601,31 +774,99 @@ final class PrototypeGame: ObservableObject {
   }
 
   private func persist() {
-    let snapshot = PrototypeSnapshot(
-      game: game,
-      cumulativeScores: cumulativeScores,
-      result: result,
-      aiDelay: aiDelay,
-      difficulty: selectedDifficulty
-    )
-    guard let data = try? JSONEncoder().encode(snapshot) else { return }
-    let url = Self.snapshotURL
-    try? FileManager.default.createDirectory(
-      at: url.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    try? data.write(to: url, options: .atomic)
+    if sessionActive { library.session = makeSession() }
+    try? ProgressArchive.save(library, to: Self.storageDirectory)
   }
 
-  private static func loadSnapshot() -> PrototypeSnapshot? {
-    guard let data = try? Data(contentsOf: snapshotURL) else { return nil }
+  private func makeSession() -> SavedSession {
+    SavedSession(
+      seed: handSeed,
+      game: game,
+      steps: steps,
+      canReplay: canReplay,
+      cumulativeScores: cumulativeScores,
+      score: result?.score,
+      winner: result?.winner,
+      discarder: result?.discarder,
+      winMethod: lastMethod,
+      deltas: result?.deltas ?? cumulativeScores,
+      drawn: result?.isDraw ?? false,
+      paused: isPaused,
+      aiDelay: aiDelay,
+      difficulty: selectedDifficulty,
+      mode: mode,
+      careerLevelID: careerLevelID,
+      practiceHints: practiceHints,
+      lastRecordID: lastRecordID
+    )
+  }
+
+  private func restore(_ session: SavedSession) {
+    handSeed = session.seed
+    game = session.game
+    steps = session.steps
+    canReplay = session.canReplay
+    cumulativeScores = session.cumulativeScores
+    lastMethod = session.winMethod
+    if session.drawn || session.winner != nil {
+      result = RoundResult(
+        winner: session.winner,
+        discarder: session.discarder,
+        score: session.score,
+        deltas: session.deltas
+      )
+    } else {
+      result = nil
+    }
+    aiDelay = session.aiDelay
+    selectedDifficulty = session.difficulty
+    mode = session.mode
+    pendingMode = session.mode
+    careerLevelID = session.careerLevelID
+    practiceHints = session.practiceHints
+    lastRecordID = session.lastRecordID
+    isPaused = session.paused
+    sessionActive = true
+    showGameSetup = false
+    actions = []
+    selectedTile = nil
+  }
+
+  private static func loadLegacy() -> PrototypeSnapshot? {
+    guard let data = try? Data(contentsOf: legacySnapshotURL) else { return nil }
     return try? JSONDecoder().decode(PrototypeSnapshot.self, from: data)
   }
 
-  private static var snapshotURL: URL {
+  private static func migrated(_ snapshot: PrototypeSnapshot) -> SavedSession {
+    SavedSession(
+      seed: 0,
+      game: snapshot.game,
+      steps: [],
+      canReplay: false,
+      cumulativeScores: snapshot.cumulativeScores,
+      score: snapshot.result?.score,
+      winner: snapshot.result?.winner,
+      discarder: snapshot.result?.discarder,
+      winMethod: nil,
+      deltas: snapshot.result?.deltas ?? [0, 0, 0, 0],
+      drawn: snapshot.result?.isDraw ?? false,
+      paused: false,
+      aiDelay: snapshot.aiDelay,
+      difficulty: snapshot.difficulty,
+      mode: .quick,
+      careerLevelID: nil,
+      practiceHints: false,
+      lastRecordID: nil
+    )
+  }
+
+  private static var storageDirectory: URL {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("cardsForPlay", isDirectory: true)
-      .appendingPathComponent("prototype-session.json")
+  }
+
+  private static var legacySnapshotURL: URL {
+    storageDirectory.appendingPathComponent("prototype-session.json")
   }
 
   private static func freshSeed() -> UInt64 {
