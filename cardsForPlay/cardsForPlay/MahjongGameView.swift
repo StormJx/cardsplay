@@ -17,6 +17,10 @@ struct MahjongGameView: View {
       switch model.route {
       case .home:
         HomeMenu(model: model)
+      case .more:
+        MoreMenu(model: model)
+      case .settings:
+        SettingsPage(model: model)
       case .table:
         M3LandscapeTable(model: model)
       case .career:

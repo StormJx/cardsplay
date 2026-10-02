@@ -14,6 +14,8 @@ struct RoundResult: Codable {
 
 enum AppRoute: Equatable {
   case home
+  case more
+  case settings
   case table
   case career
   case stats
