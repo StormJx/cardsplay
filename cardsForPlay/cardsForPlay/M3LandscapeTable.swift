@@ -1,3 +1,4 @@
+import MahjongAI
 import MahjongRules
 import SpriteKit
 import SwiftUI
@@ -30,6 +31,7 @@ struct M3LandscapeTable: View {
 
         if model.isPaused { pauseOverlay }
         if let result = model.result { resultOverlay(result) }
+        if model.showGameSetup { gameSetupOverlay }
       }
     }
     .sheet(isPresented: $model.showSettings) {
@@ -48,6 +50,8 @@ struct M3LandscapeTable: View {
       Text("轮到：\(model.currentActorName)")
         .fontWeight(.semibold)
         .foregroundStyle(.yellow)
+      Text(model.selectedDifficulty.displayName)
+        .foregroundStyle(.cyan)
       Spacer(minLength: 5)
       ForEach(0..<4, id: \.self) { seat in
         Text("\(PrototypeGame.playerNames[seat].prefix(2)) \(signedScore(seat))")
@@ -151,10 +155,17 @@ struct M3LandscapeTable: View {
     orientation: SeatOrientation,
     compact: Bool
   ) -> some View {
-    VStack(spacing: 2) {
-      Text("\(role) · \(PrototypeGame.playerNames[seat])")
-        .font(.system(size: compact ? 8 : 9, weight: .bold))
-        .lineLimit(1)
+    let profile = model.opponentProfile(seat: seat)
+    return VStack(spacing: 2) {
+      HStack(spacing: 2) {
+        Image(systemName: profile.avatarSystemName)
+        Text("\(role) · \(profile.name)")
+      }
+      .font(.system(size: compact ? 8 : 9, weight: .bold))
+      .lineLimit(1)
+      Text("\(profile.difficulty.displayName) · \(profile.personality.archetype.displayName)")
+        .font(.system(size: 6))
+        .foregroundStyle(.cyan)
       if orientation == .top {
         HiddenHand(count: model.game.players[seat].concealed.count, vertical: false)
         MeldRack(melds: model.game.players[seat].melds, vertical: false)
@@ -169,7 +180,7 @@ struct M3LandscapeTable: View {
     .background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 7))
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "\(role)，\(PrototypeGame.playerNames[seat])，\(model.game.players[seat].concealed.count)张暗牌"
+      "\(role)，\(profile.name)，\(profile.difficulty.displayName)，\(profile.personality.archetype.displayName)，\(model.game.players[seat].concealed.count)张暗牌"
     )
   }
 
@@ -271,6 +282,70 @@ struct M3LandscapeTable: View {
     .padding(.vertical, 3)
     .frame(height: compact ? 64 : 72)
     .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+  }
+
+  private var gameSetupOverlay: some View {
+    VStack(spacing: 10) {
+      Text("选择电脑难度")
+        .font(.title2.bold())
+      Picker("电脑难度", selection: $model.selectedDifficulty) {
+        ForEach(AIDifficulty.allCases, id: \.self) { difficulty in
+          Text(difficulty.displayName).tag(difficulty)
+        }
+      }
+      .pickerStyle(.segmented)
+
+      HStack(spacing: 9) {
+        ForEach(model.opponentProfiles, id: \.seat) { profile in
+          VStack(spacing: 3) {
+            Image(systemName: profile.avatarSystemName)
+              .font(.title3)
+            Text(profile.name).font(.caption.bold())
+            Text(profile.personality.archetype.displayName)
+              .font(.caption2)
+              .foregroundStyle(.cyan)
+          }
+          .frame(maxWidth: .infinity)
+          .padding(6)
+          .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 8))
+        }
+      }
+
+      HStack {
+        Text("出牌速度").font(.caption)
+        Button("慢") { model.aiDelay = 0.65 }
+        Button("标准") { model.aiDelay = 0.22 }
+        Button("快") { model.aiDelay = 0.06 }
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+
+      Text(setupDescription)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+
+      Button("开始一盘") {
+        model.startGame(difficulty: model.selectedDifficulty)
+      }
+      .buttonStyle(.borderedProminent)
+      .accessibilityIdentifier("start-game")
+    }
+    .frame(maxWidth: 520)
+    .padding(20)
+    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+    .padding()
+  }
+
+  private var setupDescription: String {
+    switch model.selectedDifficulty {
+    case .beginner:
+      return "随机与基础牌效并用，防守较弱"
+    case .normal:
+      return "牌效优先，并依据公开牌做基础防守"
+    case .expert:
+      return "综合公开牌河、危险度、分数与角色番路；不读取暗牌"
+    }
   }
 
   private var isStandardTileShowcase: Bool {

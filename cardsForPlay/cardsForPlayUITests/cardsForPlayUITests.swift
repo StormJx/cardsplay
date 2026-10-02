@@ -29,6 +29,10 @@ final class cardsForPlayUITests: XCTestCase {
     app.launch()
     XCUIDevice.shared.orientation = .landscapeLeft
 
+    let start = app.buttons["start-game"]
+    XCTAssertTrue(start.waitForExistence(timeout: 5))
+    start.tap()
+
     let result = app.otherElements["result-overlay"]
     let discard = app.buttons["discard-button"]
 

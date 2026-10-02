@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		CBA2B050306F500000596661 /* MahjongRules in Frameworks */ = {isa = PBXBuildFile; productRef = CBA2B052306F500000596661 /* MahjongRules */; };
+		CBA2B054306F500000596661 /* MahjongAI in Frameworks */ = {isa = PBXBuildFile; productRef = CBA2B053306F500000596661 /* MahjongAI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CBA2B054306F500000596661 /* MahjongAI in Frameworks */,
 				CBA2B050306F500000596661 /* MahjongRules in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -117,6 +119,7 @@
 			);
 			name = cardsForPlay;
 			packageProductDependencies = (
+				CBA2B053306F500000596661 /* MahjongAI */,
 				CBA2B052306F500000596661 /* MahjongRules */,
 			);
 			productName = cardsForPlay;
@@ -574,6 +577,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = CBA2B051306F500000596661 /* XCLocalSwiftPackageReference ".." */;
 			productName = MahjongRules;
+		};
+		CBA2B053306F500000596661 /* MahjongAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CBA2B051306F500000596661 /* XCLocalSwiftPackageReference ".." */;
+			productName = MahjongAI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
