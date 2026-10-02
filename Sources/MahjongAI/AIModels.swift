@@ -129,7 +129,6 @@ public struct AIInformationSet: Codable, Sendable {
 
   public var visibleTileCounts: [TileKind: Int] {
     var counts: [TileKind: Int] = [:]
-    for tile in ownTiles { counts[tile, default: 0] += 1 }
     for tile in discards.flatMap({ $0 }) { counts[tile, default: 0] += 1 }
     for tile in publicMelds.flatMap({ $0 }).flatMap(\.tiles) { counts[tile, default: 0] += 1 }
     for tile in exposedFlowers.flatMap({ $0 }) { counts[tile, default: 0] += 1 }
