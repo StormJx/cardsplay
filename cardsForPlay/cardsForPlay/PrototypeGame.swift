@@ -206,23 +206,29 @@ final class PrototypeGame: ObservableObject {
     return mode.displayName
   }
 
-  var practiceAdvice: [ReplayAdvice] {
-    guard practiceHints, case .awaitingDiscard(seat: 0) = game.phase else { return [] }
-    return HandReplay.advice(state: game, difficulty: .normal, scores: cumulativeScores)
-  }
+  private var practiceBriefCache: (key: String, brief: PracticeBrief)?
 
-  var practiceAdviceText: String {
-    let tips = practiceAdvice.map {
-      "\($0.tile.displayName) 效\($0.efficiency) 危\($0.dangerLabel)"
-    }.joined(separator: " · ")
-    let unseen: String
-    if let selectedTile {
-      let count = PublicInfo.unseenCount(state: game, kind: selectedTile.kind)
-      unseen = "\(selectedTile.kind.displayName)未见\(count)"
-    } else {
-      unseen = "点牌可看未见张数"
-    }
-    return "练习（只看公开牌）\(tips) \(unseen)"
+  var practiceBrief: PracticeBrief? {
+    guard practiceHints, result == nil else { return nil }
+    let selected = selectedTile?.kind.rawValue ?? -1
+    let key = "\(game.events.count)#\(game.phase)#\(selected)#\(game.players[0].concealed.map(\.kind.rawValue))"
+    if let practiceBriefCache, practiceBriefCache.key == key { return practiceBriefCache.brief }
+    let player = game.players[0]
+    let brief = PracticeCoach.brief(
+      concealed: player.concealed.map(\.kind),
+      melds: player.melds,
+      discarding: game.phase == .awaitingDiscard(seat: 0),
+      selected: selectedTile?.kind,
+      discards: PublicInfo.rivers(events: game.events),
+      exposedMelds: game.players.map { $0.melds.filter(\.isExposed) },
+      scores: cumulativeScores,
+      seat: 0,
+      seatWind: seatWind(0),
+      roundWind: EastRound.roundWind,
+      unseen: { PublicInfo.unseenCount(state: self.game, kind: $0) }
+    )
+    practiceBriefCache = (key, brief)
+    return brief
   }
 
   var lastRecordCanReplay: Bool {

@@ -172,6 +172,86 @@ struct ProgressTests {
     #expect(replayed.players[1].concealed.map(\.kind) == live.players[1].concealed.map(\.kind))
   }
 
+  @Test func practiceShowsWaitsAndPublicDanger() {
+    let concealed: [TileKind] = [
+      .character1, .character2, .character3,
+      .character4, .character5, .character6,
+      .character7, .character8, .character9,
+      .dot2, .dot3, .white, .white, .east,
+    ]
+    let waits = PracticeCoach.waitingTiles(
+      concealed: concealed,
+      removing: .east,
+      melds: [],
+      seatWind: .east,
+      roundWind: .east,
+      unseen: { kind in
+        if kind == .dot1 { return 1 }
+        if kind == .dot4 { return 2 }
+        return 4
+      }
+    )
+    #expect(waits.map(\.tile) == [.dot1, .dot4])
+    #expect(waits.map(\.remaining) == [1, 2])
+
+    let brief = PracticeCoach.brief(
+      concealed: concealed,
+      melds: [],
+      discarding: true,
+      selected: .east,
+      discards: [[], [], [], []],
+      exposedMelds: [[], [], [], []],
+      scores: [0, 0, 0, 0],
+      seat: 0,
+      seatWind: .east,
+      roundWind: .east,
+      unseen: { _ in 4 }
+    )
+    #expect(brief.waitLine.contains("打出东后听"))
+    #expect(brief.waitLine.contains("1筒剩4"))
+    #expect(brief.waitLine.contains("4筒剩4"))
+    #expect(brief.dangerLine.contains("低"))
+    #expect(brief.dangerLine.contains("没有副露"))
+
+    let pairs: [TileKind] = [
+      .character1, .character1, .character2, .character2, .character3, .character3,
+      .character4, .character4, .character5, .character5, .character6, .character6,
+      .character7, .character8,
+    ]
+    #expect(PracticeCoach.closeFanNotes(tiles: pairs).contains("接近七对，还差1对"))
+    let flush: [TileKind] = [
+      .character1, .character1, .character2, .character2, .character3, .character3,
+      .character4, .character4, .character5, .character5, .character6, .character7,
+      .character8, .dot9,
+    ]
+    #expect(PracticeCoach.closeFanNotes(tiles: flush).contains("接近清一色，还差打出1张其他花色"))
+
+    let pung = Meld(type: .pung, tiles: [.white, .white, .white])
+    let quiet = PracticeCoach.danger(
+      tile: .character5, seat: 0, discards: [[], [], [], []], exposedMelds: [[], [], [], []],
+      scores: [0, 0, 0, 0], visibleCount: 0)
+    let exposed = PracticeCoach.danger(
+      tile: .character5, seat: 0, discards: [[], [], [], []],
+      exposedMelds: [[], [pung, pung], [], []], scores: [0, 0, 0, 0], visibleCount: 0)
+    let seenOut = PracticeCoach.danger(
+      tile: .character5, seat: 0, discards: [[], [], [], []],
+      exposedMelds: [[], [pung, pung], [], []], scores: [0, 0, 0, 0], visibleCount: 3)
+    let safeDiscard = PracticeCoach.danger(
+      tile: .character5, seat: 0, discards: [[], [.character5], [], []],
+      exposedMelds: [[], [pung, pung], [], []], scores: [0, 0, 0, 0], visibleCount: 1)
+    #expect(quiet.level == "低")
+    #expect(exposed.level == "高")
+    #expect(exposed.reason.contains("中张"))
+    #expect(seenOut.level == "低")
+    #expect(safeDiscard.level == "低")
+
+    var players = Array(repeating: PlayerState(), count: 4)
+    players[1].concealed = (0..<4).map { Tile(kind: .south, copy: $0) }
+    let state = GameState(
+      wall: Wall(tiles: []), players: players, phase: .awaitingDiscard(seat: 0))
+    #expect(PublicInfo.unseenCount(state: state, kind: .south) == 4)
+  }
+
   @Test func careerCatalogKeepsChapterOnePlayable() {
     #expect(CareerCatalog.chapters.count == 5)
     #expect(CareerCatalog.levels.count == 50)
