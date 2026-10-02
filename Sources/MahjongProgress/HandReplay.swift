@@ -153,6 +153,24 @@ public enum HandReplay {
     case win
   }
 
+  public static let checkpointMarks: Set<ReplayMark> = [.dealtIn, .skippedWin, .missedKong]
+
+  /// Frames where autoplay should pause: a dealt-in discard, a passed win, or a missed concealed kong.
+  public static func checkpointIndexes(notes: [ReplayNote]) -> [Int] {
+    Array(Set(notes.compactMap { checkpointMarks.contains($0.mark) ? $0.frameIndex : nil })).sorted()
+  }
+
+  /// One autoplay tick. Playback stops on the last frame and, when requested, on a checkpoint.
+  public static func advance(
+    index: Int, frameCount: Int, stopAtChecks: Bool, checkpoints: [Int]
+  ) -> (index: Int, playing: Bool) {
+    let last = frameCount - 1
+    guard frameCount > 0, index < last else { return (max(0, index), false) }
+    let next = index + 1
+    let stop = next == last || (stopAtChecks && checkpoints.contains(next))
+    return (next, !stop)
+  }
+
   public static func jumpIndexes(frames: [ReplayFrame], kind: Jump) -> [Int] {
     frames.compactMap { frame in
       switch kind {

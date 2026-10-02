@@ -138,6 +138,19 @@ struct ProgressTests {
         step: .command(.discard(seat: 0, tile: Tile(kind: .east, copy: 0)))),
     ])
     #expect(kongNotes.contains { $0.mark == .missedKong })
+    #expect(HandReplay.checkpointIndexes(notes: notes) == [1])
+    #expect(HandReplay.checkpointIndexes(notes: kongNotes) == [1])
+
+    let mixed = notes + kongNotes + [
+      ReplayNote(frameIndex: 4, mark: .dealtIn, text: "点炮"),
+      ReplayNote(frameIndex: 4, mark: .won, text: "和牌"),
+      ReplayNote(frameIndex: 6, mark: .claimed, text: "鸣牌"),
+    ]
+    #expect(HandReplay.checkpointIndexes(notes: mixed) == [1, 4])
+    #expect(HandReplay.advance(index: 0, frameCount: 8, stopAtChecks: true, checkpoints: [1, 4]) == (1, false))
+    #expect(HandReplay.advance(index: 1, frameCount: 8, stopAtChecks: true, checkpoints: [1, 4]) == (2, true))
+    #expect(HandReplay.advance(index: 3, frameCount: 8, stopAtChecks: false, checkpoints: [1, 4]) == (4, true))
+    #expect(HandReplay.advance(index: 6, frameCount: 8, stopAtChecks: false, checkpoints: []) == (7, false))
   }
 
   @Test func eastRoundRotatesTheDealerAndKeepsScoresZeroSum() throws {
