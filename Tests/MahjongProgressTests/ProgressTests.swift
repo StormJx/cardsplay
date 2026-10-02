@@ -140,6 +140,38 @@ struct ProgressTests {
     #expect(kongNotes.contains { $0.mark == .missedKong })
   }
 
+  @Test func eastRoundRotatesTheDealerAndKeepsScoresZeroSum() throws {
+    let initial = 2
+    let dealers = (0..<EastRound.handCount).map {
+      EastRound.dealer(handIndex: $0, initialDealer: initial)
+    }
+    #expect(dealers == [2, 3, 0, 1])
+    #expect(Set(dealers).count == 4)
+    #expect(EastRound.isFinalHand(2) == false)
+    #expect(EastRound.isFinalHand(3))
+    #expect(EastRound.roundWind == .east)
+    #expect(EastRound.seatWind(seat: 2, dealer: 2) == .east)
+    #expect(EastRound.seatWind(seat: 3, dealer: 2) == .south)
+    #expect(EastRound.seatWind(seat: 0, dealer: 2) == .west)
+    #expect(EastRound.seatWind(seat: 1, dealer: 2) == .north)
+
+    let selfDraw = try Settlement.win(winner: 0, discarder: nil, fan: 10)
+    let ron = try Settlement.win(winner: 1, discarder: 0, fan: 10)
+    #expect(selfDraw == [54, -18, -18, -18])
+    #expect(ron == [-18, 34, -8, -8])
+    let afterTwo = EastRound.accumulate(EastRound.accumulate([0, 0, 0, 0], selfDraw), ron)
+    #expect(afterTwo == [36, 16, -26, -26])
+    #expect(afterTwo.reduce(0, +) == 0)
+
+    var live = GameState(seed: 5, dealer: 1)
+    let tile = live.players[1].concealed[0]
+    try live.apply(.discard(seat: 1, tile: tile))
+    let replayed = try HandReplay.state(
+      seed: 5, steps: [.command(.discard(seat: 1, tile: tile))], dealer: 1)
+    #expect(replayed.phase == live.phase)
+    #expect(replayed.players[1].concealed.map(\.kind) == live.players[1].concealed.map(\.kind))
+  }
+
   @Test func careerCatalogKeepsChapterOnePlayable() {
     #expect(CareerCatalog.chapters.count == 5)
     #expect(CareerCatalog.levels.count == 50)

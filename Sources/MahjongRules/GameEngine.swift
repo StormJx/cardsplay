@@ -85,16 +85,19 @@ public struct GameState: Codable, Sendable {
   public private(set) var phase: HandPhase
   public private(set) var events: [GameEvent]
 
-  public init(seed: UInt64) {
+  /// `dealer` is the East seat for this hand. That seat receives 14 tiles and discards first.
+  /// Dealer 0 keeps the original deal order.
+  public init(seed: UInt64, dealer: Int = 0) {
+    precondition((0..<4).contains(dealer))
     wall = Wall(seed: seed)
     players = Array(repeating: PlayerState(), count: 4)
     discards = []
-    phase = .awaitingDiscard(seat: 0)
+    phase = .awaitingDiscard(seat: dealer)
     events = []
 
     for round in 0..<14 {
-      for seat in 0..<4 where round < 13 || seat == 0 {
-        dealPlayableTile(to: seat)
+      for offset in 0..<4 where round < 13 || offset == 0 {
+        dealPlayableTile(to: (dealer + offset) % 4)
       }
     }
   }

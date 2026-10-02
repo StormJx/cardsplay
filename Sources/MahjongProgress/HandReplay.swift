@@ -42,8 +42,8 @@ public enum ReplayError: Error, Equatable {
 }
 
 public enum HandReplay {
-  public static func frames(seed: UInt64, steps: [ReplayStep]) throws -> [ReplayFrame] {
-    var state = GameState(seed: seed)
+  public static func frames(seed: UInt64, steps: [ReplayStep], dealer: Int = 0) throws -> [ReplayFrame] {
+    var state = GameState(seed: seed, dealer: dealer)
     var frames = [ReplayFrame(index: 0, state: state, step: nil)]
     for step in steps {
       switch step {
@@ -54,7 +54,10 @@ public enum HandReplay {
           throw ReplayError.rule(error)
         }
       case let .declareWin(seat):
-        guard let context = WinContextBuilder.selfDraw(state: state, seat: seat) else {
+        guard let context = WinContextBuilder.selfDraw(
+          state: state, seat: seat, roundWind: EastRound.roundWind,
+          seatWind: EastRound.seatWind(seat: seat, dealer: dealer)
+        ) else {
           throw ReplayError.missingWinContext
         }
         _ = state.adjudicateWinDeclaration(seat: seat, context: context)
@@ -64,18 +67,18 @@ public enum HandReplay {
     return frames
   }
 
-  public static func state(seed: UInt64, steps: [ReplayStep]) throws -> GameState {
-    try frames(seed: seed, steps: steps).last!.state
+  public static func state(seed: UInt64, steps: [ReplayStep], dealer: Int = 0) throws -> GameState {
+    try frames(seed: seed, steps: steps, dealer: dealer).last!.state
   }
 
-  public static func notes(frames: [ReplayFrame]) -> [ReplayNote] {
+  public static func notes(frames: [ReplayFrame], dealer: Int = 0) -> [ReplayNote] {
     guard frames.count > 1 else { return [] }
     var notes: [ReplayNote] = []
     for index in 1..<frames.count {
       let previous = frames[index - 1].state
       let frame = frames[index]
       guard let step = frame.step else { continue }
-      if let note = skippedWin(previous: previous, step: step, index: index) {
+      if let note = skippedWin(previous: previous, step: step, index: index, dealer: dealer) {
         notes.append(note)
       }
       if let note = missedKong(previous: previous, step: step, index: index) {
@@ -172,7 +175,9 @@ public enum HandReplay {
     }
   }
 
-  private static func skippedWin(previous: GameState, step: ReplayStep, index: Int) -> ReplayNote? {
+  private static func skippedWin(
+    previous: GameState, step: ReplayStep, index: Int, dealer: Int
+  ) -> ReplayNote? {
     let tile: Tile
     let method: WinMethod
     switch previous.phase {
@@ -185,7 +190,10 @@ public enum HandReplay {
     default:
       return nil
     }
-    guard WinContextBuilder.legalScore(state: previous, seat: 0, tile: tile.kind, method: method) != nil
+    guard WinContextBuilder.legalScore(
+      state: previous, seat: 0, tile: tile.kind, method: method,
+      roundWind: EastRound.roundWind, seatWind: EastRound.seatWind(seat: 0, dealer: dealer)
+    ) != nil
     else { return nil }
     guard case let .command(.resolveClaims(claims)) = step else { return nil }
     guard !claims.contains(where: { $0.seat == 0 && $0.type == .win }) else { return nil }

@@ -42,7 +42,7 @@ struct M3LandscapeTable: View {
   private var statusBar: some View {
     HStack(spacing: 9) {
       Label(model.tableLabel, systemImage: "flag.fill")
-      Text("你：东")
+      Text(model.yourWindLabel)
       Divider().frame(height: 13)
       Text("牌墙 \(model.game.wall.remainingCount)")
         .monospacedDigit()
@@ -54,7 +54,7 @@ struct M3LandscapeTable: View {
         .foregroundStyle(.cyan)
       Spacer(minLength: 5)
       ForEach(0..<4, id: \.self) { seat in
-        Text("\(PrototypeGame.playerNames[seat].prefix(2)) \(signedScore(seat))")
+        Text("\(scoreName(seat)) \(signedScore(seat))")
           .monospacedDigit()
       }
       Button {
@@ -170,7 +170,11 @@ struct M3LandscapeTable: View {
       }
       .font(.system(size: compact ? 8 : 9, weight: .bold))
       .lineLimit(1)
-      Text("\(profile.difficulty.displayName) · \(profile.personality.archetype.displayName)")
+      Text(
+        model.isEastRound
+          ? "\(model.windTag(seat)) · \(profile.difficulty.displayName)"
+          : "\(profile.difficulty.displayName) · \(profile.personality.archetype.displayName)"
+      )
         .font(.system(size: 6))
         .foregroundStyle(.cyan)
       if orientation == .top {
@@ -187,7 +191,9 @@ struct M3LandscapeTable: View {
     .background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 7))
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      "\(role)，\(profile.name)，\(profile.difficulty.displayName)，\(profile.personality.archetype.displayName)，\(model.game.players[seat].concealed.count)张暗牌"
+      model.isEastRound
+        ? "\(role)，\(model.windTag(seat))，\(profile.name)，\(model.game.players[seat].concealed.count)张暗牌"
+        : "\(role)，\(profile.name)，\(profile.difficulty.displayName)，\(profile.personality.archetype.displayName)，\(model.game.players[seat].concealed.count)张暗牌"
     )
   }
 
@@ -232,7 +238,7 @@ struct M3LandscapeTable: View {
   private func playerArea(compact: Bool) -> some View {
     HStack(spacing: 7) {
       VStack(spacing: 2) {
-        Text("自己")
+        Text(model.isEastRound ? "自己 · \(model.windTag(0))" : "自己")
           .font(.caption2.bold())
         MeldRack(melds: model.game.players[0].melds, vertical: true)
         if !model.game.players[0].flowers.isEmpty {
@@ -295,6 +301,12 @@ struct M3LandscapeTable: View {
     VStack(spacing: 10) {
       Text(model.setupTitle)
         .font(.title2.bold())
+      if let note = model.setupNote {
+        Text(note)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+      }
       Picker("电脑难度", selection: $model.selectedDifficulty) {
         ForEach(AIDifficulty.allCases, id: \.self) { difficulty in
           Text(difficulty.displayName).tag(difficulty)
@@ -392,13 +404,18 @@ struct M3LandscapeTable: View {
 
   private func resultOverlay(_ result: RoundResult) -> some View {
     VStack(spacing: 8) {
+      if model.isEastRound {
+        Text(model.tableLabel)
+          .font(.caption.bold())
+          .foregroundStyle(.secondary)
+      }
       if result.isDraw {
         Text("流局").font(.title.bold())
         Text("牌墙已摸完，本局无人和牌")
       } else if let winner = result.winner, let score = result.score {
-        Text("\(PrototypeGame.playerNames[winner])和牌")
+        Text("\(model.playerLabel(winner))和牌")
           .font(.title2.bold())
-        Text(result.discarder == nil ? "自摸" : "\(PrototypeGame.playerNames[result.discarder!])放铳")
+        Text(result.discarder == nil ? "自摸" : "\(model.playerLabel(result.discarder!))放铳")
           .foregroundStyle(.secondary)
         Text(score.awards.map { "\($0.fan.name) \($0.points)番" }.joined(separator: " · "))
           .font(.caption)
@@ -419,21 +436,25 @@ struct M3LandscapeTable: View {
           }
         }
         .frame(height: 32)
-        Text(
-          result.deltas.enumerated().map {
-            "\(PrototypeGame.playerNames[$0.offset]) \($0.element >= 0 ? "+" : "")\($0.element)"
-          }.joined(separator: "　")
-        )
-        .font(.caption2.monospacedDigit())
+        Text(deltaLine(result.deltas))
+          .font(.caption2.monospacedDigit())
         if let careerNote = model.careerNote {
           Text(careerNote).font(.caption.bold()).foregroundStyle(.yellow)
         }
       }
+      if model.isEastRound {
+        Text(model.roundComplete ? "东风圈总分" : "四家目前总分")
+          .font(.caption.bold())
+        Text(model.cumulativeLine)
+          .font(.caption2.monospacedDigit())
+          .multilineTextAlignment(.center)
+      }
       HStack {
         Button("返回主页") { model.returnHome() }
           .buttonStyle(.bordered)
-        Button(model.careerLevelID == nil ? "再来一局" : "重试本关") { model.newGame() }
+        Button(model.primaryResultButton) { model.advanceResult() }
           .buttonStyle(.borderedProminent)
+          .accessibilityIdentifier("result-primary")
         if model.lastRecordCanReplay, let id = model.lastRecordID {
           Button("复盘") { model.openReplay(id) }
             .buttonStyle(.bordered)
@@ -499,6 +520,17 @@ struct M3LandscapeTable: View {
   private func signedScore(_ seat: Int) -> String {
     let score = model.cumulativeScores[seat]
     return "\(score >= 0 ? "+" : "")\(score)"
+  }
+
+  private func scoreName(_ seat: Int) -> String {
+    if model.isEastRound { return model.windTag(seat) }
+    return String(PrototypeGame.playerNames[seat].prefix(2))
+  }
+
+  private func deltaLine(_ deltas: [Int]) -> String {
+    deltas.enumerated().map {
+      "\(model.playerLabel($0.offset)) \($0.element >= 0 ? "+" : "")\($0.element)"
+    }.joined(separator: "　")
   }
 }
 private enum SeatOrientation {
@@ -857,11 +889,11 @@ extension PrototypeGame {
   fileprivate var currentActorName: String {
     switch game.phase {
     case let .awaitingDraw(seat), let .awaitingDiscard(seat):
-      return Self.playerNames[seat]
+      return playerLabel(seat)
     case let .awaitingResponses(discarder, _):
-      return "响应\(Self.playerNames[discarder])"
+      return "响应\(playerLabel(discarder))"
     case let .awaitingRobKong(declarer, _, _):
-      return "抢杠响应\(Self.playerNames[declarer])"
+      return "抢杠响应\(playerLabel(declarer))"
     case .endedDraw, .endedWin:
       return "本局结束"
     }
@@ -875,7 +907,7 @@ extension PrototypeGame {
     case .awaitingDiscard(seat: 0): return "请选择一张牌打出"
     case .awaitingDraw(seat: 0): return "正在摸牌"
     case let .awaitingDiscard(seat), let .awaitingDraw(seat):
-      return "\(Self.playerNames[seat])正在操作"
+      return "\(playerLabel(seat))正在操作"
     case .awaitingResponses: return "等待吃 / 碰 / 杠 / 和 / 过"
     case .awaitingRobKong: return "等待抢杠和 / 过"
     case .endedDraw, .endedWin: return "本局结束"

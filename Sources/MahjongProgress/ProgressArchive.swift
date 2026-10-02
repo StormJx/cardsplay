@@ -22,6 +22,8 @@ public struct SavedSession: Codable, Sendable {
   public var careerLevelID: String?
   public var practiceHints: Bool
   public var lastRecordID: UUID?
+  public var roundHandIndex: Int?
+  public var roundInitialDealer: Int?
 
   public init(
     seed: UInt64,
@@ -41,7 +43,9 @@ public struct SavedSession: Codable, Sendable {
     mode: PlayMode,
     careerLevelID: String?,
     practiceHints: Bool,
-    lastRecordID: UUID?
+    lastRecordID: UUID?,
+    roundHandIndex: Int? = nil,
+    roundInitialDealer: Int? = nil
   ) {
     self.seed = seed
     self.game = game
@@ -61,6 +65,8 @@ public struct SavedSession: Codable, Sendable {
     self.careerLevelID = careerLevelID
     self.practiceHints = practiceHints
     self.lastRecordID = lastRecordID
+    self.roundHandIndex = roundHandIndex
+    self.roundInitialDealer = roundInitialDealer
   }
 }
 

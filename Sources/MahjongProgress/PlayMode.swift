@@ -4,6 +4,7 @@ import MahjongRules
 
 public enum PlayMode: String, Codable, CaseIterable, Sendable {
   case quick
+  case round
   case full
   case career
   case practice
@@ -11,6 +12,7 @@ public enum PlayMode: String, Codable, CaseIterable, Sendable {
   public var displayName: String {
     switch self {
     case .quick: return "快速"
+    case .round: return "一圈"
     case .full: return "完整"
     case .career: return "生涯"
     case .practice: return "练习"
@@ -98,6 +100,7 @@ public struct HandRecord: Codable, Identifiable, Sendable {
   public let humanExposedMelds: Int
   public let ruleVersion: String
   public let careerLevelID: String?
+  public let dealerSeat: Int?
 
   public init(
     id: UUID = UUID(),
@@ -120,7 +123,8 @@ public struct HandRecord: Codable, Identifiable, Sendable {
     concealedKongCount: Int,
     humanExposedMelds: Int,
     ruleVersion: String = MCRRuleBook.version,
-    careerLevelID: String? = nil
+    careerLevelID: String? = nil,
+    dealerSeat: Int? = nil
   ) {
     self.id = id
     self.playedAt = playedAt
@@ -143,6 +147,7 @@ public struct HandRecord: Codable, Identifiable, Sendable {
     self.humanExposedMelds = humanExposedMelds
     self.ruleVersion = ruleVersion
     self.careerLevelID = careerLevelID
+    self.dealerSeat = dealerSeat
   }
 
   public var humanWon: Bool { winner == 0 }
