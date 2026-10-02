@@ -1,7 +1,5 @@
 import MahjongRules
-
 import SpriteKit
-
 import SwiftUI
 
 struct M3LandscapeTable: View {
@@ -230,38 +228,64 @@ struct M3LandscapeTable: View {
       }
       .frame(width: 45)
 
-      GeometryReader { hand in
-        let count = max(14, model.game.players[0].concealed.count)
-        let spacing: CGFloat = 2
-        let tileWidth = min(
-          compact ? 38 : 43,
-          (hand.size.width - CGFloat(count - 1) * spacing) / CGFloat(count)
-        )
-        HStack(spacing: spacing) {
-          ForEach(model.sortedPlayerTiles, id: \.self) { tile in
-            Button {
-              model.select(tile)
-            } label: {
-              GraphicTileFace(
-                kind: tile.kind,
-                selected: model.selectedTile == tile,
-                miniature: false
-              )
-              .frame(width: tileWidth, height: compact ? 54 : 61)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("tile-\(tile.kind.rawValue)-\(tile.copy)")
-            .accessibilityLabel(tile.kind.displayName)
-            .accessibilityAddTraits(model.selectedTile == tile ? .isSelected : [])
+      if isStandardTileShowcase {
+        HStack(spacing: 2) {
+          ForEach(standardTileShowcase, id: \.self) { kind in
+            GraphicTileFace(kind: kind, selected: false, miniature: false)
+              .frame(width: compact ? 29 : 35, height: compact ? 48 : 58)
+              .accessibilityLabel(kind.displayName)
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+      } else {
+        GeometryReader { hand in
+          let count = max(14, model.game.players[0].concealed.count)
+          let spacing: CGFloat = 2
+          let tileWidth = min(
+            compact ? 38 : 43,
+            (hand.size.width - CGFloat(count - 1) * spacing) / CGFloat(count)
+          )
+          HStack(spacing: spacing) {
+            ForEach(model.sortedPlayerTiles, id: \.self) { tile in
+              Button {
+                model.select(tile)
+              } label: {
+                GraphicTileFace(
+                  kind: tile.kind,
+                  selected: model.selectedTile == tile,
+                  miniature: false
+                )
+                .frame(width: tileWidth, height: compact ? 54 : 61)
+              }
+              .buttonStyle(.plain)
+              .accessibilityIdentifier("tile-\(tile.kind.rawValue)-\(tile.copy)")
+              .accessibilityLabel(tile.kind.displayName)
+              .accessibilityAddTraits(model.selectedTile == tile ? .isSelected : [])
+            }
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
       }
     }
     .padding(.horizontal, 6)
     .padding(.vertical, 3)
     .frame(height: compact ? 64 : 72)
     .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+  }
+
+  private var isStandardTileShowcase: Bool {
+    ProcessInfo.processInfo.arguments.contains("-standard-tile-showcase")
+  }
+
+  private var standardTileShowcase: [TileKind] {
+    [
+      .character1, .character5, .character9,
+      .bamboo1, .bamboo5, .bamboo9,
+      .dot1, .dot5, .dot9,
+      .east, .south, .west, .north,
+      .red, .green, .white,
+      .spring, .plum,
+    ]
   }
 
   private var pauseOverlay: some View {
@@ -403,7 +427,7 @@ private struct MeldRack: View {
   private var faces: some View {
     ForEach(Array(tiles.enumerated()), id: \.offset) { _, kind in
       GraphicTileFace(kind: kind, selected: false, miniature: true)
-        .frame(width: vertical ? 13 : 10, height: vertical ? 9 : 15)
+        .frame(width: vertical ? 13 : 10, height: vertical ? 18 : 15)
     }
   }
 }
@@ -431,7 +455,8 @@ private struct DiscardZone: View {
           GraphicTileFace(
             kind: tile.kind,
             selected: index == visibleTiles.count - 1,
-            miniature: true
+            miniature: true,
+            contentRotationDegrees: orientation.contentCounterRotation
           )
           .frame(width: compact ? 17 : 19, height: compact ? 23 : 26)
         }
@@ -458,15 +483,37 @@ private enum DiscardOrientation {
   case top, bottom, left, right
 
   var isSide: Bool { self == .left || self == .right }
+
+  var contentCounterRotation: Double {
+    switch self {
+    case .left: return 90
+    case .right: return -90
+    case .top, .bottom: return 0
+    }
+  }
 }
 struct GraphicTileFace: View {
   let kind: TileKind
   let selected: Bool
   let miniature: Bool
+  let contentRotationDegrees: Double
+
+  init(
+    kind: TileKind,
+    selected: Bool,
+    miniature: Bool,
+    contentRotationDegrees: Double = 0
+  ) {
+    self.kind = kind
+    self.selected = selected
+    self.miniature = miniature
+    self.contentRotationDegrees = contentRotationDegrees
+  }
 
   var body: some View {
     GeometryReader { proxy in
       tileGraphic
+        .rotationEffect(.degrees(contentRotationDegrees))
         .padding(miniature ? 1.5 : max(2, proxy.size.width * 0.09))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.white)
@@ -485,39 +532,72 @@ struct GraphicTileFace: View {
   @ViewBuilder
   private var tileGraphic: some View {
     if let suit = kind.suit, let rank = kind.rank {
-      PipPattern(suit: suit, rank: rank)
+      if suit == .characters {
+        CharacterTile(rank: rank, miniature: miniature)
+      } else {
+        PipPattern(suit: suit, rank: rank)
+      }
     } else if let wind = kind.wind {
-      Image(
-        systemName: [
-          "arrow.right.circle.fill", "arrow.down.circle.fill", "arrow.left.circle.fill",
-          "arrow.up.circle.fill",
-        ][wind.rawValue]
-      )
-      .resizable()
-      .scaledToFit()
-      .foregroundStyle(.black)
+      Text(["东", "南", "西", "北"][wind.rawValue])
+        .font(.system(size: miniature ? 8 : 27, weight: .black, design: .serif))
+        .minimumScaleFactor(0.5)
+        .foregroundStyle(wind == .east ? .blue : .black)
     } else if let dragon = kind.dragon {
-      Image(systemName: ["flame.fill", "leaf.fill", "square.fill"][dragon.rawValue])
-        .resizable()
-        .scaledToFit()
-        .foregroundStyle([Color.red, .green, .blue.opacity(0.18)][dragon.rawValue])
-        .overlay {
-          if dragon == .white {
-            RoundedRectangle(cornerRadius: 1)
-              .stroke(.blue, lineWidth: miniature ? 0.7 : 2)
-          }
-        }
+      DragonTile(dragon: dragon, miniature: miniature)
     } else if let flower = kind.flower {
-      Image(
-        systemName: [
-          "camera.macro", "sun.max.fill", "leaf.fill", "snowflake",
-          "tree.fill", "sparkles", "leaf.circle.fill", "seal.fill",
-        ][flower.rawValue]
-      )
-      .resizable()
-      .scaledToFit()
-      .foregroundStyle([Color.pink, .orange, .green, .cyan][flower.rawValue % 4])
+      Text(["春", "夏", "秋", "冬", "梅", "兰", "竹", "菊"][flower.rawValue])
+        .font(.system(size: miniature ? 7 : 22, weight: .black, design: .serif))
+        .minimumScaleFactor(0.45)
+        .foregroundStyle(
+          [Color.pink, .red, .orange, .blue, .pink, .purple, .green, .orange][flower.rawValue])
     }
+  }
+}
+private struct CharacterTile: View {
+  let rank: Int
+  let miniature: Bool
+
+  private var numeral: String {
+    ["一", "二", "三", "四", "五", "六", "七", "八", "九"][rank - 1]
+  }
+
+  var body: some View {
+    VStack(spacing: miniature ? -2 : -3) {
+      Text(numeral)
+        .foregroundStyle(.black)
+      Text("万")
+        .foregroundStyle(.red)
+    }
+    .font(.system(size: miniature ? 7 : 21, weight: .black, design: .serif))
+    .minimumScaleFactor(0.42)
+    .lineLimit(1)
+  }
+}
+private struct DragonTile: View {
+  let dragon: Dragon
+  let miniature: Bool
+
+  var body: some View {
+    Group {
+      switch dragon {
+      case .red:
+        Text("中")
+          .foregroundStyle(.red)
+      case .green:
+        Text("发")
+          .foregroundStyle(.green)
+      case .white:
+        RoundedRectangle(cornerRadius: miniature ? 1 : 3)
+          .fill(.white)
+          .overlay {
+            RoundedRectangle(cornerRadius: miniature ? 1 : 3)
+              .stroke(.blue, lineWidth: miniature ? 1 : 3)
+          }
+          .padding(miniature ? 1 : 3)
+      }
+    }
+    .font(.system(size: miniature ? 8 : 28, weight: .black, design: .serif))
+    .minimumScaleFactor(0.45)
   }
 }
 private struct PipPattern: View {
@@ -569,18 +649,37 @@ private struct PipPattern: View {
           .scaledToFit()
           .foregroundStyle(.green)
       } else {
-        Capsule()
-          .fill(index.isMultiple(of: 2) ? Color.green : Color.teal)
-          .overlay {
-            Capsule()
-              .stroke(.yellow.opacity(0.65), lineWidth: 0.6)
-          }
+        BambooStalk(alternate: !index.isMultiple(of: 2))
       }
     case .characters:
-      RoundedRectangle(cornerRadius: 1.5)
-        .fill(index.isMultiple(of: 2) ? Color.red : Color.orange)
-        .rotationEffect(.degrees(45))
-        .padding(1)
+      Color.clear
+    }
+  }
+}
+private struct BambooStalk: View {
+  let alternate: Bool
+
+  var body: some View {
+    GeometryReader { proxy in
+      let width = proxy.size.width
+      ZStack {
+        Capsule()
+          .fill(alternate ? Color.teal : Color.green)
+          .frame(width: width * 0.48)
+        VStack {
+          Capsule()
+            .fill(Color.green.opacity(0.9))
+            .frame(height: max(0.7, proxy.size.height * 0.16))
+          Spacer()
+          Capsule()
+            .fill(Color.green.opacity(0.9))
+            .frame(height: max(0.7, proxy.size.height * 0.16))
+        }
+        Rectangle()
+          .fill(.yellow.opacity(0.72))
+          .frame(width: width * 0.52, height: max(0.6, proxy.size.height * 0.09))
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 }
