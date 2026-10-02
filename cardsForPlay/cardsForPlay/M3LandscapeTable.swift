@@ -23,6 +23,9 @@ struct M3LandscapeTable: View {
           statusBar
           board(compact: compact)
           operationBar
+          if model.practiceHints, model.result == nil, !model.showGameSetup {
+            practiceHints(compact: compact)
+          }
           playerArea(compact: compact)
         }
         .padding(.leading, max(7, proxy.safeAreaInsets.leading + 3))
@@ -133,13 +136,6 @@ struct M3LandscapeTable: View {
             .font(.system(size: compact ? 9 : 10))
             .foregroundStyle(.secondary)
             .lineLimit(1)
-          if model.practiceHints {
-            Text(model.practiceAdviceText)
-              .font(.system(size: 8))
-              .foregroundStyle(.cyan)
-              .lineLimit(2)
-              .multilineTextAlignment(.center)
-          }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 7)
@@ -233,6 +229,23 @@ struct M3LandscapeTable: View {
       Spacer(minLength: 0)
     }
     .frame(height: 34)
+  }
+
+  private func practiceHints(compact: Bool) -> some View {
+    let brief = model.practiceBrief
+    return VStack(alignment: .leading, spacing: 1) {
+      Text(brief?.waitLine ?? "听 轮到你时再看")
+      Text(brief?.fanLine ?? "番 轮到你时再看")
+      Text(brief?.dangerLine ?? "危险 点一张牌查看")
+    }
+    .font(.system(size: compact ? 9 : 10, weight: .medium))
+    .foregroundStyle(.cyan)
+    .lineLimit(1)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 3)
+    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+    .accessibilityIdentifier("practice-hints")
   }
 
   private func playerArea(compact: Bool) -> some View {
