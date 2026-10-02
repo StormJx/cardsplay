@@ -1,4 +1,5 @@
 import Foundation
+import MahjongAI
 import MahjongRules
 
 struct RoundResult: Codable {
@@ -14,6 +15,7 @@ private struct PrototypeSnapshot: Codable {
   let cumulativeScores: [Int]
   let result: RoundResult?
   let aiDelay: Double
+  let difficulty: AIDifficulty
 }
 enum HumanAction: Hashable, Identifiable {
   case win
@@ -50,7 +52,7 @@ enum HumanAction: Hashable, Identifiable {
 }
 @MainActor
 final class PrototypeGame: ObservableObject {
-  static let playerNames = ["你（东）", "阿简（南）", "小白（西）", "小竹（北）"]
+  static let playerNames = ["你（东）", "阿岚（南）", "静川（西）", "墨衡（北）"]
 
   @Published private(set) var game = GameState(seed: 0)
   @Published private(set) var cumulativeScores = [0, 0, 0, 0]
@@ -60,7 +62,10 @@ final class PrototypeGame: ObservableObject {
   @Published var isPaused = false
   @Published var showSettings = false
   @Published var aiDelay = 0.22
+  @Published var selectedDifficulty = AIDifficulty.normal
+  @Published var showGameSetup = true
   @Published private(set) var message = "正在开局…"
+  @Published private(set) var aiDecisionLogs: [Int: AIDecisionLog] = [:]
 
   private var driveTask: Task<Void, Never>?
 
@@ -73,11 +78,13 @@ final class PrototypeGame: ObservableObject {
       cumulativeScores = snapshot.cumulativeScores
       result = snapshot.result
       aiDelay = snapshot.aiDelay
+      selectedDifficulty = snapshot.difficulty
+      showGameSetup = false
       message = snapshot.result == nil ? "已恢复上次牌局" : "已恢复结算"
     } else {
       game = GameState(seed: Self.freshSeed())
     }
-    scheduleDrive()
+    if !showGameSetup { scheduleDrive() }
   }
 
   deinit {
@@ -86,14 +93,35 @@ final class PrototypeGame: ObservableObject {
 
   func newGame() {
     driveTask?.cancel()
+    result = nil
+    actions = []
+    selectedTile = nil
+    isPaused = false
+    showGameSetup = true
+    message = "请选择电脑难度"
+  }
+
+  func startGame(difficulty: AIDifficulty) {
+    driveTask?.cancel()
+    selectedDifficulty = difficulty
     game = GameState(seed: Self.freshSeed())
     result = nil
     actions = []
     selectedTile = nil
     isPaused = false
-    message = "新一局开始，你是东家"
+    showGameSetup = false
+    aiDecisionLogs = [:]
+    message = "\(difficulty.displayName)难度开局，你是东家"
     persist()
     scheduleDrive()
+  }
+
+  var opponentProfiles: [OpponentProfile] {
+    OpponentProfile.standardOpponents(difficulty: selectedDifficulty)
+  }
+
+  func opponentProfile(seat: Int) -> OpponentProfile {
+    opponentProfiles.first { $0.seat == seat }!
   }
 
   func togglePause() {
@@ -198,7 +226,8 @@ final class PrototypeGame: ObservableObject {
           }
           let tile = aiDiscard(seat: seat)
           try apply(.discard(seat: seat, tile: tile))
-          message = "\(Self.playerNames[seat])打出 \(tile.kind.displayName)"
+          let explanation = aiDecisionLogs[seat]?.explanation ?? "选择合法出牌"
+          message = "\(Self.playerNames[seat])打出 \(tile.kind.displayName) · \(explanation)"
         } catch {
           message = "电脑操作失败：\(error)"
           return
@@ -348,12 +377,38 @@ final class PrototypeGame: ObservableObject {
 
     var claims: [Claim] = []
     for seat in 1..<4 where seat != discarder {
-      if game.canExposedKong(seat: seat, discard: tile.kind) {
+      let information = aiInformation(seat: seat)
+      let profile = opponentProfile(seat: seat)
+      let seed = aiDecisionSeed(seat: seat)
+      if game.canExposedKong(seat: seat, discard: tile.kind),
+        MahjongAIDecider.shouldClaim(
+          .exposedKong,
+          discardedTile: tile.kind,
+          information: information,
+          profile: profile,
+          decisionSeed: seed)
+      {
         claims.append(Claim(seat: seat, type: .exposedKong))
-      } else if game.canPung(seat: seat, discard: tile.kind) {
+      } else if game.canPung(seat: seat, discard: tile.kind),
+        MahjongAIDecider.shouldClaim(
+          .pung,
+          discardedTile: tile.kind,
+          information: information,
+          profile: profile,
+          decisionSeed: seed)
+      {
         claims.append(Claim(seat: seat, type: .pung))
       }
-      if let run = game.legalChows(seat: seat, discard: tile.kind, discarder: discarder).first {
+      if let run = game.legalChows(
+        seat: seat, discard: tile.kind, discarder: discarder
+      ).first,
+        MahjongAIDecider.shouldClaim(
+          .chow(run),
+          discardedTile: tile.kind,
+          information: information,
+          profile: profile,
+          decisionSeed: seed)
+      {
         claims.append(Claim(seat: seat, type: .chow, chowTiles: run))
       }
     }
@@ -459,10 +514,61 @@ final class PrototypeGame: ObservableObject {
   }
 
   private func aiDiscard(seat: Int) -> Tile {
-    game.players[seat].concealed.sorted {
-      if $0.kind != $1.kind { return $0.kind < $1.kind }
-      return $0.copy < $1.copy
-    }.last!
+    let decision = MahjongAIDecider.chooseDiscard(
+      information: aiInformation(seat: seat),
+      profile: opponentProfile(seat: seat),
+      decisionSeed: aiDecisionSeed(seat: seat)
+    )
+    aiDecisionLogs[seat] = decision
+    return game.players[seat].concealed
+      .filter { $0.kind == decision.chosenTile }
+      .sorted { $0.copy < $1.copy }
+      .first!
+  }
+
+  private func aiInformation(seat: Int) -> AIInformationSet {
+    AIInformationSet(
+      seat: seat,
+      ownTiles: game.players[seat].concealed.map(\.kind),
+      ownMelds: game.players[seat].melds,
+      discards: publicDiscards(),
+      publicMelds: game.players.map { player in
+        player.melds.filter(\.isExposed)
+      },
+      exposedFlowers: game.players.map { $0.flowers.map(\.kind) },
+      wallRemaining: game.wall.remainingCount,
+      scores: cumulativeScores,
+      roundWind: .east,
+      actionNumber: game.events.count
+    )
+  }
+
+  private func publicDiscards() -> [[TileKind]] {
+    var rivers = Array(repeating: [TileKind](), count: 4)
+    var pendingSeat: Int?
+    for event in game.events {
+      switch event {
+      case let .discarded(seat, tile):
+        rivers[seat].append(tile.kind)
+        pendingSeat = seat
+      case .claimed:
+        if let seat = pendingSeat, !rivers[seat].isEmpty { rivers[seat].removeLast() }
+        pendingSeat = nil
+      case .drew:
+        pendingSeat = nil
+      default:
+        break
+      }
+    }
+    return rivers
+  }
+
+  private func aiDecisionSeed(seat: Int) -> UInt64 {
+    UInt64(game.events.count &* 31 &+ seat &* 7 &+ selectedDifficultyIndex)
+  }
+
+  private var selectedDifficultyIndex: Int {
+    AIDifficulty.allCases.firstIndex(of: selectedDifficulty) ?? 0
   }
 
   private func finishWin(winner: Int, discarder: Int?, score: ScoreResult) {
@@ -499,7 +605,8 @@ final class PrototypeGame: ObservableObject {
       game: game,
       cumulativeScores: cumulativeScores,
       result: result,
-      aiDelay: aiDelay
+      aiDelay: aiDelay,
+      difficulty: selectedDifficulty
     )
     guard let data = try? JSONEncoder().encode(snapshot) else { return }
     let url = Self.snapshotURL
