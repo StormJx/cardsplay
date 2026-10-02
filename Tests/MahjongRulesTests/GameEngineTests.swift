@@ -104,6 +104,7 @@ struct GameEngineTests {
     )
     try concealed.apply(.concealedKong(seat: 0, kind: .east))
     #expect(concealed.players[0].melds.first?.type == .concealedKong)
+    #expect(concealed.players[0].melds.first?.isKong == true)
     #expect(concealed.players[0].concealed == [replacement])
 
     let fourth = Tile(kind: .south, copy: 3)

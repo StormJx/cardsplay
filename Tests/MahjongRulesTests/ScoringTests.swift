@@ -19,7 +19,9 @@ struct ScoringTests {
 
   @Test func scoresThirteenOrphansAndSuppressesIncludedFans() {
     let honors: [TileKind] = [.east, .south, .west, .north, .red, .green, .white]
-    let result = MCRScorer.score(context("119m19p19s", honors: honors, winning: .character1))
+    let hand = context("119m19p19s", honors: honors, winning: .character1)
+    let result = MCRScorer.score(hand)
+    #expect(MCRScorer.scores(hand).isEmpty == false)
     #expect(result?.nonFlowerPoints == 88)
     #expect(awardSet(result).contains(.thirteenOrphans))
     #expect(!awardSet(result).contains(.allTerminalsAndHonors))
