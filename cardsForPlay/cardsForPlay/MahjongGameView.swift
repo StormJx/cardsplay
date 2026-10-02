@@ -13,37 +13,11 @@ struct MahjongGameView: View {
   }()
 
   var body: some View {
-    GeometryReader { geometry in
-      ZStack {
-        SpriteView(scene: boardScene)
-          .ignoresSafeArea()
-
-        VStack(spacing: 8) {
-          header
-          opponents
-          tableCenter
-          Spacer(minLength: 4)
-          actionBar
-          playerArea
-        }
-        .padding(.horizontal, max(12, geometry.safeAreaInsets.leading + 4))
-        .padding(.vertical, 8)
-
-        if model.isPaused {
-          pauseOverlay
-        }
-        if let result = model.result {
-          resultOverlay(result)
-        }
+    M3LandscapeTable(model: model)
+      .preferredColorScheme(.dark)
+      .onChange(of: scenePhase) { _, phase in
+        if phase != .active { model.saveForBackground() }
       }
-    }
-    .preferredColorScheme(.dark)
-    .sheet(isPresented: $model.showSettings) {
-      settingsView
-    }
-    .onChange(of: scenePhase) { _, phase in
-      if phase != .active { model.saveForBackground() }
-    }
   }
 
   private var header: some View {
