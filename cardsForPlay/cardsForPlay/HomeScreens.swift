@@ -7,26 +7,56 @@ struct HomeMenu: View {
   @ObservedObject var model: PrototypeGame
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      HStack {
-        VStack(alignment: .leading, spacing: 2) {
-          Text("单机国标麻将").font(.title2.bold())
-          Text("快速、练习、东风圈和第一章可以开打。完整十六盘还没有做。")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+    ScrollView {
+      VStack(spacing: 10) {
+        Text("单机国标麻将")
+          .font(.title2.bold())
+          .frame(maxWidth: .infinity, alignment: .leading)
+        if hasUnfinishedSession {
+          menu("继续牌局", "home-continue") { model.continueGame() }
         }
-        Spacer()
-        if model.library.session != nil {
-          Button("继续牌局") { model.continueGame() }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("home-continue")
-        }
-      }
-      LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
         menu("快速一盘", "home-quick") { model.beginSetup(mode: .quick) }
         menu("东风圈", "home-round") { model.beginSetup(mode: .round) }
-        menu("练习一盘", "home-practice") { model.beginSetup(mode: .practice) }
         menu("生涯", "home-career") { model.route = .career }
+        menu("更多", "home-more") { model.route = .more }
+      }
+      .padding(16)
+      .frame(maxWidth: 360)
+      .frame(maxWidth: .infinity)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(red: 0.04, green: 0.16, blue: 0.12))
+  }
+
+  private var hasUnfinishedSession: Bool {
+    guard let session = model.library.session else { return false }
+    let handOpen = session.winner == nil && !session.drawn
+    if session.mode == .round {
+      return handOpen || !EastRound.isFinalHand(session.roundHandIndex ?? 0)
+    }
+    return handOpen
+  }
+
+  private func menu(_ title: String, _ identifier: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Text(title)
+        .font(.headline)
+        .frame(maxWidth: .infinity, minHeight: 44)
+    }
+    .buttonStyle(.borderedProminent)
+    .tint(.teal)
+    .accessibilityIdentifier(identifier)
+  }
+}
+
+struct MoreMenu: View {
+  @ObservedObject var model: PrototypeGame
+
+  var body: some View {
+    ScrollView {
+      VStack(spacing: 10) {
+        pageHeader("更多", model: model)
+        menu("练习一盘", "home-practice") { model.beginSetup(mode: .practice) }
         menu("战绩", "home-stats") { model.route = .stats }
         menu("成就", "home-achievements") { model.route = .achievements }
         menu("番种图鉴", "home-guides") {
@@ -35,12 +65,12 @@ struct HomeMenu: View {
         }
         menu("牌谱", "home-replays") { model.route = .replays }
         menu("规则要点", "home-help") { model.route = .help }
+        menu("设置", "home-settings") { model.route = .settings }
       }
-      Text("完整对局（16 盘）还不能开打。")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
+      .padding(16)
+      .frame(maxWidth: 360)
+      .frame(maxWidth: .infinity)
     }
-    .padding(16)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(red: 0.04, green: 0.16, blue: 0.12))
   }
@@ -49,11 +79,70 @@ struct HomeMenu: View {
     Button(action: action) {
       Text(title)
         .font(.headline)
-        .frame(maxWidth: .infinity, minHeight: 54)
+        .frame(maxWidth: .infinity, minHeight: 44)
     }
     .buttonStyle(.borderedProminent)
     .tint(.teal)
     .accessibilityIdentifier(identifier)
+  }
+}
+
+struct SettingsPage: View {
+  @ObservedObject var model: PrototypeGame
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 12) {
+        pageHeader("设置", model: model, backTitle: "返回更多") { model.route = .more }
+        Text("电脑出牌速度").font(.headline)
+        VStack(spacing: 8) {
+          speedButton("慢", 0.65)
+          speedButton("标准", 0.22)
+          speedButton("快", 0.06)
+        }
+        Text("只调整等待时间，不改变电脑规则或能力。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Text("声音").font(.headline)
+        volumeSlider("音乐", value: model.library.audio.music) {
+          model.updateAudioVolume(\.music, $0)
+        }
+        volumeSlider("音效", value: model.library.audio.effects) {
+          model.updateAudioVolume(\.effects, $0)
+        }
+        volumeSlider("语音", value: model.library.audio.voice) {
+          model.updateAudioVolume(\.voice, $0)
+        }
+      }
+      .padding(16)
+      .frame(maxWidth: 360)
+      .frame(maxWidth: .infinity)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(red: 0.04, green: 0.16, blue: 0.12))
+  }
+
+  private func speedButton(_ title: String, _ delay: Double) -> some View {
+    let selected = abs(model.aiDelay - delay) < 0.001
+    return Button {
+      model.aiDelay = delay
+      model.saveForBackground()
+    } label: {
+      Text(title).frame(maxWidth: .infinity, minHeight: 36)
+    }
+    .buttonStyle(.borderedProminent)
+    .tint(selected ? .teal : .gray)
+  }
+
+  private func volumeSlider(
+    _ title: String,
+    value: Double,
+    set: @escaping (Double) -> Void
+  ) -> some View {
+    HStack {
+      Text(title).frame(width: 36, alignment: .leading)
+      Slider(value: Binding(get: { value }, set: set), in: 0...1)
+    }
   }
 }
 
@@ -509,12 +598,23 @@ struct RulesHelpPage: View {
   }
 }
 
-private func pageHeader(_ title: String, model: PrototypeGame) -> some View {
+private func pageHeader(
+  _ title: String,
+  model: PrototypeGame,
+  backTitle: String = "返回主页",
+  back: (() -> Void)? = nil
+) -> some View {
   HStack {
     Text(title).font(.title2.bold())
     Spacer()
-    Button("返回主页") { model.route = .home }
-      .buttonStyle(.bordered)
+    Button(backTitle) {
+      if let back {
+        back()
+      } else {
+        model.route = .home
+      }
+    }
+    .buttonStyle(.bordered)
   }
 }
 

@@ -298,6 +298,15 @@ struct M3LandscapeTable: View {
   }
 
   private var gameSetupOverlay: some View {
+    ScrollView {
+      setupForm
+    }
+    .frame(maxWidth: 420, maxHeight: 360)
+    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+    .padding()
+  }
+
+  private var setupForm: some View {
     VStack(spacing: 10) {
       Text(model.setupTitle)
         .font(.title2.bold())
@@ -307,37 +316,25 @@ struct M3LandscapeTable: View {
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
       }
-      Picker("电脑难度", selection: $model.selectedDifficulty) {
+      VStack(spacing: 8) {
         ForEach(AIDifficulty.allCases, id: \.self) { difficulty in
-          Text(difficulty.displayName).tag(difficulty)
-        }
-      }
-      .pickerStyle(.segmented)
-
-      HStack(spacing: 9) {
-        ForEach(model.opponentProfiles, id: \.seat) { profile in
-          VStack(spacing: 3) {
-            Image(systemName: profile.avatarSystemName)
-              .font(.title3)
-            Text(profile.name).font(.caption.bold())
-            Text(profile.personality.archetype.displayName)
-              .font(.caption2)
-              .foregroundStyle(.cyan)
+          Button {
+            model.selectedDifficulty = difficulty
+          } label: {
+            HStack {
+              Text(difficulty.displayName)
+              Spacer()
+              if model.selectedDifficulty == difficulty {
+                Image(systemName: "checkmark")
+              }
+            }
+            .frame(maxWidth: .infinity, minHeight: 36)
           }
-          .frame(maxWidth: .infinity)
-          .padding(6)
-          .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 8))
+          .buttonStyle(.borderedProminent)
+          .tint(model.selectedDifficulty == difficulty ? .teal : .gray)
+          .accessibilityIdentifier("difficulty-\(difficulty.rawValue)")
         }
       }
-
-      HStack {
-        Text("出牌速度").font(.caption)
-        Button("慢") { model.aiDelay = 0.65 }
-        Button("标准") { model.aiDelay = 0.22 }
-        Button("快") { model.aiDelay = 0.06 }
-      }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
 
       Text(setupDescription)
         .font(.caption2)
@@ -354,10 +351,7 @@ struct M3LandscapeTable: View {
         .accessibilityIdentifier("start-game")
       }
     }
-    .frame(maxWidth: 520)
     .padding(20)
-    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-    .padding()
   }
 
   private var setupDescription: String {
