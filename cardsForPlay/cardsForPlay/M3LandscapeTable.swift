@@ -1,0 +1,653 @@
+import MahjongRules
+
+import SpriteKit
+
+import SwiftUI
+
+struct M3LandscapeTable: View {
+  @ObservedObject var model: PrototypeGame
+
+  private let boardScene: GameScene = {
+    let scene = GameScene(size: CGSize(width: 1_200, height: 700))
+    scene.scaleMode = .resizeFill
+    return scene
+  }()
+
+  var body: some View {
+    GeometryReader { proxy in
+      let compact = proxy.size.height < 390
+      ZStack {
+        SpriteView(scene: boardScene)
+          .ignoresSafeArea()
+
+        VStack(spacing: compact ? 3 : 5) {
+          statusBar
+          board(compact: compact)
+          operationBar
+          playerArea(compact: compact)
+        }
+        .padding(.leading, max(7, proxy.safeAreaInsets.leading + 3))
+        .padding(.trailing, max(7, proxy.safeAreaInsets.trailing + 3))
+        .padding(.vertical, compact ? 3 : 5)
+
+        if model.isPaused { pauseOverlay }
+        if let result = model.result { resultOverlay(result) }
+      }
+    }
+    .sheet(isPresented: $model.showSettings) {
+      settingsView
+    }
+  }
+
+  private var statusBar: some View {
+    HStack(spacing: 9) {
+      Label("东圈", systemImage: "flag.fill")
+      Text("你：东")
+      Divider().frame(height: 13)
+      Text("牌墙 \(model.game.wall.remainingCount)")
+        .monospacedDigit()
+      Divider().frame(height: 13)
+      Text("轮到：\(model.currentActorName)")
+        .fontWeight(.semibold)
+        .foregroundStyle(.yellow)
+      Spacer(minLength: 5)
+      ForEach(0..<4, id: \.self) { seat in
+        Text("\(PrototypeGame.playerNames[seat].prefix(2)) \(signedScore(seat))")
+          .monospacedDigit()
+      }
+      Button {
+        model.togglePause()
+      } label: {
+        Image(systemName: model.isPaused ? "play.fill" : "pause.fill")
+      }
+      Button {
+        model.showSettings = true
+      } label: {
+        Image(systemName: "gearshape.fill")
+      }
+    }
+    .font(.system(size: 11, weight: .medium))
+    .buttonStyle(.borderless)
+    .padding(.horizontal, 9)
+    .frame(height: 25)
+    .background(.black.opacity(0.58), in: Capsule())
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("牌局状态栏")
+  }
+
+  private func board(compact: Bool) -> some View {
+    GeometryReader { board in
+      let width = board.size.width
+      let height = board.size.height
+      let sideInset = max(66, min(82, width * 0.1))
+      let riverInset = max(125, min(148, width * 0.18))
+
+      ZStack {
+        seatPanel(seat: 2, role: "对家", orientation: .top, compact: compact)
+          .position(x: width / 2, y: compact ? 17 : 22)
+
+        DiscardZone(
+          title: "对家弃牌",
+          tiles: model.discardRivers[2],
+          orientation: .top,
+          compact: compact
+        )
+        .position(x: width / 2, y: compact ? 72 : 83)
+
+        seatPanel(seat: 3, role: "上家", orientation: .left, compact: compact)
+          .position(x: sideInset * 0.42, y: height / 2)
+
+        DiscardZone(
+          title: "上家弃牌",
+          tiles: model.discardRivers[3],
+          orientation: .left,
+          compact: compact
+        )
+        .position(x: riverInset, y: height / 2)
+
+        seatPanel(seat: 1, role: "下家", orientation: .right, compact: compact)
+          .position(x: width - sideInset * 0.42, y: height / 2)
+
+        DiscardZone(
+          title: "下家弃牌",
+          tiles: model.discardRivers[1],
+          orientation: .right,
+          compact: compact
+        )
+        .position(x: width - riverInset, y: height / 2)
+
+        DiscardZone(
+          title: "你的弃牌",
+          tiles: model.discardRivers[0],
+          orientation: .bottom,
+          compact: compact
+        )
+        .position(x: width / 2, y: height - (compact ? 49 : 57))
+
+        VStack(spacing: 3) {
+          Text(model.currentOperationTitle)
+            .font(.system(size: compact ? 13 : 15, weight: .bold))
+          Text(model.message)
+            .font(.system(size: compact ? 9 : 10))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 7)
+        .background(.black.opacity(0.52), in: Capsule())
+        .frame(maxWidth: max(190, width - riverInset * 2 - 15))
+        .position(x: width / 2, y: height / 2)
+      }
+    }
+    .frame(maxHeight: .infinity)
+    .clipShape(RoundedRectangle(cornerRadius: 16))
+    .overlay {
+      RoundedRectangle(cornerRadius: 16)
+        .stroke(.yellow.opacity(0.16), lineWidth: 1)
+    }
+  }
+
+  private func seatPanel(
+    seat: Int,
+    role: String,
+    orientation: SeatOrientation,
+    compact: Bool
+  ) -> some View {
+    VStack(spacing: 2) {
+      Text("\(role) · \(PrototypeGame.playerNames[seat])")
+        .font(.system(size: compact ? 8 : 9, weight: .bold))
+        .lineLimit(1)
+      if orientation == .top {
+        HiddenHand(count: model.game.players[seat].concealed.count, vertical: false)
+        MeldRack(melds: model.game.players[seat].melds, vertical: false)
+      } else {
+        HStack(spacing: 3) {
+          HiddenHand(count: model.game.players[seat].concealed.count, vertical: true)
+          MeldRack(melds: model.game.players[seat].melds, vertical: true)
+        }
+      }
+    }
+    .padding(4)
+    .background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 7))
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(
+      "\(role)，\(PrototypeGame.playerNames[seat])，\(model.game.players[seat].concealed.count)张暗牌"
+    )
+  }
+
+  private var operationBar: some View {
+    HStack(spacing: 7) {
+      Text("当前操作")
+        .font(.caption2.bold())
+        .foregroundStyle(.secondary)
+
+      if model.actions.isEmpty {
+        Text(model.operationHint)
+          .font(.caption.bold())
+          .padding(.horizontal, 9)
+          .padding(.vertical, 5)
+          .background(.black.opacity(0.3), in: Capsule())
+      } else {
+        ForEach(model.actions) { action in
+          Button(action.title) {
+            model.perform(action)
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.small)
+          .tint(action == .win ? .red : (action == .skip ? .gray : .orange))
+          .accessibilityIdentifier("action-\(action.id)")
+        }
+      }
+
+      if case .awaitingDiscard(seat: 0) = model.game.phase {
+        Button("打出") {
+          model.discardSelected()
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .disabled(model.selectedTile == nil)
+        .accessibilityIdentifier("discard-button")
+      }
+      Spacer(minLength: 0)
+    }
+    .frame(height: 34)
+  }
+
+  private func playerArea(compact: Bool) -> some View {
+    HStack(spacing: 7) {
+      VStack(spacing: 2) {
+        Text("自己")
+          .font(.caption2.bold())
+        MeldRack(melds: model.game.players[0].melds, vertical: true)
+        if !model.game.players[0].flowers.isEmpty {
+          HStack(spacing: 1) {
+            ForEach(model.game.players[0].flowers, id: \.self) { tile in
+              GraphicTileFace(kind: tile.kind, selected: false, miniature: true)
+                .frame(width: 13, height: 18)
+            }
+          }
+        }
+      }
+      .frame(width: 45)
+
+      GeometryReader { hand in
+        let count = max(14, model.game.players[0].concealed.count)
+        let spacing: CGFloat = 2
+        let tileWidth = min(
+          compact ? 38 : 43,
+          (hand.size.width - CGFloat(count - 1) * spacing) / CGFloat(count)
+        )
+        HStack(spacing: spacing) {
+          ForEach(model.sortedPlayerTiles, id: \.self) { tile in
+            Button {
+              model.select(tile)
+            } label: {
+              GraphicTileFace(
+                kind: tile.kind,
+                selected: model.selectedTile == tile,
+                miniature: false
+              )
+              .frame(width: tileWidth, height: compact ? 54 : 61)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("tile-\(tile.kind.rawValue)-\(tile.copy)")
+            .accessibilityLabel(tile.kind.displayName)
+            .accessibilityAddTraits(model.selectedTile == tile ? .isSelected : [])
+          }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+      }
+    }
+    .padding(.horizontal, 6)
+    .padding(.vertical, 3)
+    .frame(height: compact ? 64 : 72)
+    .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+  }
+
+  private var pauseOverlay: some View {
+    VStack(spacing: 10) {
+      Image(systemName: "pause.circle.fill").font(.largeTitle)
+      Text("牌局已暂停").font(.headline)
+      Text("当前动作已经保存").font(.caption).foregroundStyle(.secondary)
+      Button("继续") { model.togglePause() }
+        .buttonStyle(.borderedProminent)
+    }
+    .padding(22)
+    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+  }
+
+  private func resultOverlay(_ result: RoundResult) -> some View {
+    VStack(spacing: 8) {
+      if result.isDraw {
+        Text("流局").font(.title.bold())
+        Text("牌墙已摸完，本局无人和牌")
+      } else if let winner = result.winner, let score = result.score {
+        Text("\(PrototypeGame.playerNames[winner])和牌")
+          .font(.title2.bold())
+        Text(result.discarder == nil ? "自摸" : "\(PrototypeGame.playerNames[result.discarder!])放铳")
+          .foregroundStyle(.secondary)
+        Text(score.awards.map { "\($0.fan.name) \($0.points)番" }.joined(separator: " · "))
+          .font(.caption)
+          .multilineTextAlignment(.center)
+        Text("合计 \(score.totalPoints) 番")
+          .font(.headline)
+          .foregroundStyle(.yellow)
+        Text(
+          result.deltas.enumerated().map {
+            "\(PrototypeGame.playerNames[$0.offset]) \($0.element >= 0 ? "+" : "")\($0.element)"
+          }.joined(separator: "　")
+        )
+        .font(.caption2.monospacedDigit())
+      }
+      Button("再来一局") { model.newGame() }
+        .buttonStyle(.borderedProminent)
+    }
+    .frame(maxWidth: 520)
+    .padding(22)
+    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
+    .padding()
+    .accessibilityIdentifier("result-overlay")
+  }
+
+  private var settingsView: some View {
+    NavigationStack {
+      Form {
+        Section("电脑出牌速度") {
+          Slider(value: $model.aiDelay, in: 0.05...0.8)
+          Text("只调整等待时间，不改变电脑规则或能力。")
+            .font(.caption)
+        }
+        Button("开始新一局", role: .destructive) {
+          model.showSettings = false
+          model.newGame()
+        }
+      }
+      .navigationTitle("基础设置")
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button("完成") {
+            model.showSettings = false
+            model.saveForBackground()
+          }
+        }
+      }
+    }
+  }
+
+  private func signedScore(_ seat: Int) -> String {
+    let score = model.cumulativeScores[seat]
+    return "\(score >= 0 ? "+" : "")\(score)"
+  }
+}
+private enum SeatOrientation {
+  case top, left, right
+}
+private struct HiddenHand: View {
+  let count: Int
+  let vertical: Bool
+
+  var body: some View {
+    Group {
+      if vertical {
+        VStack(spacing: 1) {
+          backs
+        }
+      } else {
+        HStack(spacing: 1) {
+          backs
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var backs: some View {
+    ForEach(0..<count, id: \.self) { _ in
+      RoundedRectangle(cornerRadius: 1.5)
+        .fill(.teal.gradient)
+        .overlay {
+          RoundedRectangle(cornerRadius: 1.5)
+            .stroke(.white.opacity(0.55), lineWidth: 0.5)
+        }
+        .frame(width: vertical ? 13 : 10, height: vertical ? 6 : 15)
+    }
+  }
+}
+private struct MeldRack: View {
+  let melds: [Meld]
+  let vertical: Bool
+
+  private var tiles: [TileKind] { melds.flatMap(\.tiles) }
+
+  var body: some View {
+    Group {
+      if tiles.isEmpty {
+        Text("鸣牌 —")
+          .font(.system(size: 7))
+          .foregroundStyle(.secondary)
+      } else if vertical {
+        VStack(spacing: 0.5) {
+          faces
+        }
+      } else {
+        HStack(spacing: 0.5) {
+          faces
+        }
+      }
+    }
+    .accessibilityLabel(
+      tiles.isEmpty ? "没有鸣牌" : "鸣牌 \(tiles.map(\.displayName).joined(separator: "，"))")
+  }
+
+  @ViewBuilder
+  private var faces: some View {
+    ForEach(Array(tiles.enumerated()), id: \.offset) { _, kind in
+      GraphicTileFace(kind: kind, selected: false, miniature: true)
+        .frame(width: vertical ? 13 : 10, height: vertical ? 9 : 15)
+    }
+  }
+}
+private struct DiscardZone: View {
+  let title: String
+  let tiles: [Tile]
+  let orientation: DiscardOrientation
+  let compact: Bool
+
+  private var visibleTiles: [Tile] {
+    Array(tiles.suffix(compact ? 18 : 24))
+  }
+
+  var body: some View {
+    let grid = VStack(spacing: 2) {
+      Text(title)
+        .font(.system(size: 7, weight: .medium))
+        .foregroundStyle(.secondary)
+      LazyVGrid(
+        columns: Array(repeating: GridItem(.fixed(compact ? 17 : 19), spacing: 1), count: 6),
+        alignment: .leading,
+        spacing: 1
+      ) {
+        ForEach(Array(visibleTiles.enumerated()), id: \.offset) { index, tile in
+          GraphicTileFace(
+            kind: tile.kind,
+            selected: index == visibleTiles.count - 1,
+            miniature: true
+          )
+          .frame(width: compact ? 17 : 19, height: compact ? 23 : 26)
+        }
+      }
+      .frame(
+        width: CGFloat(6 * (compact ? 17 : 19) + 5),
+        height: compact ? 72 : 106,
+        alignment: .topLeading
+      )
+    }
+    .padding(3)
+    .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 6))
+
+    if orientation.isSide {
+      grid
+        .rotationEffect(.degrees(orientation == .left ? -90 : 90))
+        .frame(width: compact ? 80 : 112, height: compact ? 112 : 126)
+    } else {
+      grid
+    }
+  }
+}
+private enum DiscardOrientation {
+  case top, bottom, left, right
+
+  var isSide: Bool { self == .left || self == .right }
+}
+struct GraphicTileFace: View {
+  let kind: TileKind
+  let selected: Bool
+  let miniature: Bool
+
+  var body: some View {
+    GeometryReader { proxy in
+      tileGraphic
+        .padding(miniature ? 1.5 : max(2, proxy.size.width * 0.09))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.white)
+        .clipShape(RoundedRectangle(cornerRadius: miniature ? 1.5 : 4))
+        .overlay {
+          RoundedRectangle(cornerRadius: miniature ? 1.5 : 4)
+            .stroke(
+              selected ? Color.yellow : Color.black.opacity(0.22), lineWidth: selected ? 2 : 0.5)
+        }
+        .shadow(color: .black.opacity(0.22), radius: selected ? 3 : 0.5)
+        .offset(y: selected && !miniature ? -4 : 0)
+    }
+    .aspectRatio(0.7, contentMode: .fit)
+  }
+
+  @ViewBuilder
+  private var tileGraphic: some View {
+    if let suit = kind.suit, let rank = kind.rank {
+      PipPattern(suit: suit, rank: rank)
+    } else if let wind = kind.wind {
+      Image(
+        systemName: [
+          "arrow.right.circle.fill", "arrow.down.circle.fill", "arrow.left.circle.fill",
+          "arrow.up.circle.fill",
+        ][wind.rawValue]
+      )
+      .resizable()
+      .scaledToFit()
+      .foregroundStyle(.black)
+    } else if let dragon = kind.dragon {
+      Image(systemName: ["flame.fill", "leaf.fill", "square.fill"][dragon.rawValue])
+        .resizable()
+        .scaledToFit()
+        .foregroundStyle([Color.red, .green, .blue.opacity(0.18)][dragon.rawValue])
+        .overlay {
+          if dragon == .white {
+            RoundedRectangle(cornerRadius: 1)
+              .stroke(.blue, lineWidth: miniature ? 0.7 : 2)
+          }
+        }
+    } else if let flower = kind.flower {
+      Image(
+        systemName: [
+          "camera.macro", "sun.max.fill", "leaf.fill", "snowflake",
+          "tree.fill", "sparkles", "leaf.circle.fill", "seal.fill",
+        ][flower.rawValue]
+      )
+      .resizable()
+      .scaledToFit()
+      .foregroundStyle([Color.pink, .orange, .green, .cyan][flower.rawValue % 4])
+    }
+  }
+}
+private struct PipPattern: View {
+  let suit: Suit
+  let rank: Int
+
+  private let positions: [[Int]] = [
+    [],
+    [4],
+    [0, 8],
+    [0, 4, 8],
+    [0, 2, 6, 8],
+    [0, 2, 4, 6, 8],
+    [0, 2, 3, 5, 6, 8],
+    [0, 2, 3, 4, 5, 6, 8],
+    [0, 1, 2, 3, 5, 6, 7, 8],
+    [0, 1, 2, 3, 4, 5, 6, 7, 8],
+  ]
+
+  var body: some View {
+    GeometryReader { proxy in
+      let gap = max(0.5, proxy.size.width * 0.04)
+      LazyVGrid(
+        columns: Array(repeating: GridItem(.flexible(), spacing: gap), count: 3),
+        spacing: gap
+      ) {
+        ForEach(0..<9, id: \.self) { index in
+          if positions[rank].contains(index) {
+            mark(index: index)
+          } else {
+            Color.clear
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func mark(index: Int) -> some View {
+    switch suit {
+    case .dots:
+      Circle()
+        .fill([Color.red, .blue, .green][index % 3])
+        .overlay { Circle().stroke(.black.opacity(0.18), lineWidth: 0.4) }
+    case .bamboo:
+      if rank == 1 {
+        Image(systemName: "bird.fill")
+          .resizable()
+          .scaledToFit()
+          .foregroundStyle(.green)
+      } else {
+        Capsule()
+          .fill(index.isMultiple(of: 2) ? Color.green : Color.teal)
+          .overlay {
+            Capsule()
+              .stroke(.yellow.opacity(0.65), lineWidth: 0.6)
+          }
+      }
+    case .characters:
+      RoundedRectangle(cornerRadius: 1.5)
+        .fill(index.isMultiple(of: 2) ? Color.red : Color.orange)
+        .rotationEffect(.degrees(45))
+        .padding(1)
+    }
+  }
+}
+extension PrototypeGame {
+  fileprivate var sortedPlayerTiles: [Tile] {
+    game.players[0].concealed.sorted {
+      if $0.kind != $1.kind { return $0.kind < $1.kind }
+      return $0.copy < $1.copy
+    }
+  }
+
+  fileprivate var discardRivers: [[Tile]] {
+    var rivers = Array(repeating: [Tile](), count: 4)
+    var pendingDiscardSeat: Int?
+    for event in game.events {
+      switch event {
+      case let .discarded(seat, tile):
+        rivers[seat].append(tile)
+        pendingDiscardSeat = seat
+      case .claimed:
+        if let seat = pendingDiscardSeat, !rivers[seat].isEmpty {
+          rivers[seat].removeLast()
+        }
+        pendingDiscardSeat = nil
+      case .drew:
+        pendingDiscardSeat = nil
+      default:
+        break
+      }
+    }
+    return rivers
+  }
+
+  fileprivate var currentActorName: String {
+    switch game.phase {
+    case let .awaitingDraw(seat), let .awaitingDiscard(seat):
+      return Self.playerNames[seat]
+    case let .awaitingResponses(discarder, _):
+      return "响应\(Self.playerNames[discarder])"
+    case let .awaitingRobKong(declarer, _, _):
+      return "抢杠响应\(Self.playerNames[declarer])"
+    case .endedDraw, .endedWin:
+      return "本局结束"
+    }
+  }
+
+  fileprivate var currentOperationTitle: String {
+    if result != nil { return "本局结束" }
+    if isPaused { return "已暂停" }
+    if !actions.isEmpty { return "请选择：\(actions.map(\.title).joined(separator: " / "))" }
+    switch game.phase {
+    case .awaitingDiscard(seat: 0): return "请选择一张牌打出"
+    case .awaitingDraw(seat: 0): return "正在摸牌"
+    case let .awaitingDiscard(seat), let .awaitingDraw(seat):
+      return "\(Self.playerNames[seat])正在操作"
+    case .awaitingResponses: return "等待吃 / 碰 / 杠 / 和 / 过"
+    case .awaitingRobKong: return "等待抢杠和 / 过"
+    case .endedDraw, .endedWin: return "本局结束"
+    }
+  }
+
+  fileprivate var operationHint: String {
+    switch game.phase {
+    case .awaitingDiscard(seat: 0): return "点选手牌后打出"
+    case .awaitingResponses: return "等待响应"
+    case .awaitingRobKong: return "等待抢杠"
+    default: return "等待对手操作"
+    }
+  }
+}
