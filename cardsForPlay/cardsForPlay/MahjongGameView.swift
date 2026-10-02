@@ -13,11 +13,35 @@ struct MahjongGameView: View {
   }()
 
   var body: some View {
-    M3LandscapeTable(model: model)
-      .preferredColorScheme(.dark)
-      .onChange(of: scenePhase) { _, phase in
-        if phase != .active { model.saveForBackground() }
+    Group {
+      switch model.route {
+      case .home:
+        HomeMenu(model: model)
+      case .table:
+        M3LandscapeTable(model: model)
+      case .career:
+        CareerMenu(model: model)
+      case .stats:
+        StatsPage(model: model)
+      case .achievements:
+        AchievementsPage(model: model)
+      case .guides:
+        FanGuidePage(model: model)
+      case .replays:
+        ReplayListPage(model: model)
+      case let .replay(id):
+        ReplayPage(model: model, recordID: id)
+      case .help:
+        RulesHelpPage(model: model)
       }
+    }
+    .preferredColorScheme(.dark)
+    .onChange(of: scenePhase) { _, phase in
+      if phase != .active { model.saveForBackground() }
+    }
+    .onAppear {
+      TableSound.shared.sync(model.library.audio)
+    }
   }
 
   private var header: some View {

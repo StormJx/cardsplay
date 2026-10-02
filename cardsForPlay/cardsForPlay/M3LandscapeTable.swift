@@ -41,7 +41,7 @@ struct M3LandscapeTable: View {
 
   private var statusBar: some View {
     HStack(spacing: 9) {
-      Label("东圈", systemImage: "flag.fill")
+      Label(model.tableLabel, systemImage: "flag.fill")
       Text("你：东")
       Divider().frame(height: 13)
       Text("牌墙 \(model.game.wall.remainingCount)")
@@ -133,6 +133,13 @@ struct M3LandscapeTable: View {
             .font(.system(size: compact ? 9 : 10))
             .foregroundStyle(.secondary)
             .lineLimit(1)
+          if model.practiceHints {
+            Text(model.practiceAdviceText)
+              .font(.system(size: 8))
+              .foregroundStyle(.cyan)
+              .lineLimit(2)
+              .multilineTextAlignment(.center)
+          }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 7)
@@ -286,7 +293,7 @@ struct M3LandscapeTable: View {
 
   private var gameSetupOverlay: some View {
     VStack(spacing: 10) {
-      Text("选择电脑难度")
+      Text(model.setupTitle)
         .font(.title2.bold())
       Picker("电脑难度", selection: $model.selectedDifficulty) {
         ForEach(AIDifficulty.allCases, id: \.self) { difficulty in
@@ -325,11 +332,15 @@ struct M3LandscapeTable: View {
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
 
-      Button("开始一盘") {
-        model.startGame(difficulty: model.selectedDifficulty)
+      HStack {
+        Button("返回") { model.returnHome() }
+          .buttonStyle(.bordered)
+        Button(model.setupButtonTitle) {
+          model.startGame(difficulty: model.selectedDifficulty)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("start-game")
       }
-      .buttonStyle(.borderedProminent)
-      .accessibilityIdentifier("start-game")
     }
     .frame(maxWidth: 520)
     .padding(20)
@@ -368,8 +379,12 @@ struct M3LandscapeTable: View {
       Image(systemName: "pause.circle.fill").font(.largeTitle)
       Text("牌局已暂停").font(.headline)
       Text("当前动作已经保存").font(.caption).foregroundStyle(.secondary)
-      Button("继续") { model.togglePause() }
-        .buttonStyle(.borderedProminent)
+      HStack {
+        Button("回到主页") { model.returnHome() }
+          .buttonStyle(.bordered)
+        Button("继续") { model.togglePause() }
+          .buttonStyle(.borderedProminent)
+      }
     }
     .padding(22)
     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
@@ -391,15 +406,39 @@ struct M3LandscapeTable: View {
         Text("合计 \(score.totalPoints) 番")
           .font(.headline)
           .foregroundStyle(.yellow)
+        ScrollView(.horizontal) {
+          HStack(spacing: 6) {
+            ForEach(Array(score.awards.enumerated()), id: \.offset) { _, award in
+              Button("\(award.fan.name) \(award.points)") {
+                model.highlightedFan = award.fan.rawValue
+                model.route = .guides
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+            }
+          }
+        }
+        .frame(height: 32)
         Text(
           result.deltas.enumerated().map {
             "\(PrototypeGame.playerNames[$0.offset]) \($0.element >= 0 ? "+" : "")\($0.element)"
           }.joined(separator: "　")
         )
         .font(.caption2.monospacedDigit())
+        if let careerNote = model.careerNote {
+          Text(careerNote).font(.caption.bold()).foregroundStyle(.yellow)
+        }
       }
-      Button("再来一局") { model.newGame() }
-        .buttonStyle(.borderedProminent)
+      HStack {
+        Button("返回主页") { model.returnHome() }
+          .buttonStyle(.bordered)
+        Button(model.careerLevelID == nil ? "再来一局" : "重试本关") { model.newGame() }
+          .buttonStyle(.borderedProminent)
+        if model.lastRecordCanReplay, let id = model.lastRecordID {
+          Button("复盘") { model.openReplay(id) }
+            .buttonStyle(.bordered)
+        }
+      }
     }
     .frame(maxWidth: 520)
     .padding(22)
@@ -416,6 +455,19 @@ struct M3LandscapeTable: View {
           Text("只调整等待时间，不改变电脑规则或能力。")
             .font(.caption)
         }
+        Section("声音") {
+          volumeSlider("音乐", value: model.library.audio.music) {
+            model.updateAudioVolume(\.music, $0)
+          }
+          volumeSlider("音效", value: model.library.audio.effects) {
+            model.updateAudioVolume(\.effects, $0)
+          }
+          volumeSlider("语音", value: model.library.audio.voice) {
+            model.updateAudioVolume(\.voice, $0)
+          }
+          Text("音乐、音效和普通话短语音分开调节。")
+            .font(.caption)
+        }
         Button("开始新一局", role: .destructive) {
           model.showSettings = false
           model.newGame()
@@ -430,6 +482,17 @@ struct M3LandscapeTable: View {
           }
         }
       }
+    }
+  }
+
+  private func volumeSlider(
+    _ title: String,
+    value: Double,
+    set: @escaping (Double) -> Void
+  ) -> some View {
+    HStack {
+      Text(title).frame(width: 36, alignment: .leading)
+      Slider(value: Binding(get: { value }, set: set), in: 0...1)
     }
   }
 
@@ -507,6 +570,7 @@ private struct MeldRack: View {
   }
 }
 private struct DiscardZone: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let title: String
   let tiles: [Tile]
   let orientation: DiscardOrientation
@@ -534,6 +598,8 @@ private struct DiscardZone: View {
             contentRotationDegrees: orientation.contentCounterRotation
           )
           .frame(width: compact ? 17 : 19, height: compact ? 23 : 26)
+          .scaleEffect(!reduceMotion && index == visibleTiles.count - 1 ? 1.12 : 1)
+          .animation(reduceMotion ? .none : .spring(duration: 0.22), value: tiles.count)
         }
       }
       .frame(

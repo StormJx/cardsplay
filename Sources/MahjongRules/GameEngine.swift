@@ -54,7 +54,7 @@ public enum HandPhase: Equatable, Codable, Sendable {
   case endedDraw
   case endedWin(winner: Int)
 }
-public enum GameCommand: Sendable {
+public enum GameCommand: Codable, Equatable, Sendable {
   case draw(seat: Int)
   case discard(seat: Int, tile: Tile)
   case concealedKong(seat: Int, kind: TileKind)

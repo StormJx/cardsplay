@@ -29,6 +29,10 @@ final class cardsForPlayUITests: XCTestCase {
     app.launch()
     XCUIDevice.shared.orientation = .landscapeLeft
 
+    let quick = app.buttons["home-quick"]
+    XCTAssertTrue(quick.waitForExistence(timeout: 5))
+    quick.tap()
+
     let start = app.buttons["start-game"]
     XCTAssertTrue(start.waitForExistence(timeout: 5))
     start.tap()

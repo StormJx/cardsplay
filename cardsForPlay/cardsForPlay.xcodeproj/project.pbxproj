@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		CBA2B050306F500000596661 /* MahjongRules in Frameworks */ = {isa = PBXBuildFile; productRef = CBA2B052306F500000596661 /* MahjongRules */; };
 		CBA2B054306F500000596661 /* MahjongAI in Frameworks */ = {isa = PBXBuildFile; productRef = CBA2B053306F500000596661 /* MahjongAI */; };
+		CBA2B055306F500000596662 /* MahjongProgress in Frameworks */ = {isa = PBXBuildFile; productRef = CBA2B056306F500000596662 /* MahjongProgress */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,6 +58,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CBA2B055306F500000596662 /* MahjongProgress in Frameworks */,
 				CBA2B054306F500000596661 /* MahjongAI in Frameworks */,
 				CBA2B050306F500000596661 /* MahjongRules in Frameworks */,
 			);
@@ -119,6 +121,7 @@
 			);
 			name = cardsForPlay;
 			packageProductDependencies = (
+				CBA2B056306F500000596662 /* MahjongProgress */,
 				CBA2B053306F500000596661 /* MahjongAI */,
 				CBA2B052306F500000596661 /* MahjongRules */,
 			);
@@ -204,11 +207,11 @@
 			);
 			mainGroup = CBA2B00D306F423F00596661;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
-			productRefGroup = CBA2B017306F423F00596661 /* Products */;
 			packageReferences = (
 				CBA2B051306F500000596661 /* XCLocalSwiftPackageReference ".." */,
 			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = CBA2B017306F423F00596661 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -496,8 +499,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = local.cardsForPlay.prototypeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -513,8 +516,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = local.cardsForPlay.prototypeUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -582,6 +585,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = CBA2B051306F500000596661 /* XCLocalSwiftPackageReference ".." */;
 			productName = MahjongAI;
+		};
+		CBA2B056306F500000596662 /* MahjongProgress */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CBA2B051306F500000596661 /* XCLocalSwiftPackageReference ".." */;
+			productName = MahjongProgress;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
