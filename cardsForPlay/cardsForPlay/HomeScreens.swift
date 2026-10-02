@@ -428,11 +428,16 @@ struct ReplayPage: View {
   @State private var difficulty = AIDifficulty.normal
   @State private var dealer = 0
   @State private var roundReplay = false
+  @State private var playing = false
+  @State private var stopAtChecks = true
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Button("返回牌谱") { model.route = .replays }
+        Button("返回牌谱") {
+          playing = false
+          model.route = .replays
+        }
         Spacer()
         Toggle("全牌揭示", isOn: $reveal)
           .toggleStyle(.button)
@@ -450,6 +455,8 @@ struct ReplayPage: View {
     }
     .padding(12)
     .onAppear(perform: load)
+    .onDisappear { playing = false }
+    .task(id: playing) { await autoplay() }
   }
 
   private var replayBody: some View {
@@ -494,8 +501,22 @@ struct ReplayPage: View {
           .foregroundStyle(.yellow)
       }
       HStack {
-        Button("上一步") { index = max(0, index - 1) }
-        Button("下一步") { index = min(frames.count - 1, index + 1) }
+        Button(playing ? "暂停" : "播放") { togglePlayback() }
+          .accessibilityIdentifier("replay-play")
+        Toggle("停在关键", isOn: $stopAtChecks)
+          .toggleStyle(.button)
+          .accessibilityIdentifier("replay-stop-checks")
+        Button("下一关键") { jumpToCheckpoint() }
+          .accessibilityIdentifier("replay-next-check")
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.small)
+      Text("自动按顺序播放。打开「停在关键」会停在点炮、放过的和、漏掉的暗杠。")
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+      HStack {
+        Button("上一步") { step(by: -1) }
+        Button("下一步") { step(by: 1) }
         Button("摸牌") { jump(.draw) }
         Button("鸣牌") { jump(.claim) }
         Button("和牌") { jump(.win) }
@@ -505,7 +526,46 @@ struct ReplayPage: View {
     }
   }
 
+  private func togglePlayback() {
+    if playing {
+      playing = false
+      return
+    }
+    if frames.isEmpty { return }
+    if index >= frames.count - 1 { index = 0 }
+    playing = true
+  }
+
+  private func step(by delta: Int) {
+    playing = false
+    index = min(max(0, index + delta), max(0, frames.count - 1))
+  }
+
+  private func jumpToCheckpoint() {
+    playing = false
+    let stops = HandReplay.checkpointIndexes(notes: notes)
+    guard let next = stops.first(where: { $0 > index }) ?? stops.first else { return }
+    index = next
+  }
+
+  private func autoplay() async {
+    guard playing else { return }
+    while !Task.isCancelled && playing {
+      try? await Task.sleep(nanoseconds: 700_000_000)
+      if Task.isCancelled || !playing { return }
+      let step = HandReplay.advance(
+        index: index,
+        frameCount: frames.count,
+        stopAtChecks: stopAtChecks,
+        checkpoints: HandReplay.checkpointIndexes(notes: notes)
+      )
+      index = step.index
+      playing = step.playing
+    }
+  }
+
   private func load() {
+    playing = false
     guard let record = model.library.records.first(where: { $0.id == recordID }) else {
       failure = "找不到这局牌谱"
       return
@@ -528,6 +588,7 @@ struct ReplayPage: View {
   }
 
   private func jump(_ kind: HandReplay.Jump) {
+    playing = false
     let indexes = HandReplay.jumpIndexes(frames: frames, kind: kind)
     guard let next = indexes.first(where: { $0 > index }) ?? indexes.first else { return }
     index = next
