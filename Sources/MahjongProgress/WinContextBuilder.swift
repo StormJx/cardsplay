@@ -5,12 +5,16 @@ public enum WinContextBuilder {
   public static func selfDraw(
     state: GameState,
     seat: Int,
-    roundWind: Wind = .east
+    roundWind: Wind = .east,
+    seatWind: Wind? = nil
   ) -> WinContext? {
     let winningTile: TileKind
     if case let .drew(drawnSeat, tile) = state.events.last, drawnSeat == seat {
       winningTile = tile.kind
-    } else if state.events.isEmpty, seat == 0, let tile = state.players[0].concealed.last {
+    } else if !hasDrawn(state, seat: seat),
+      state.players[seat].concealed.count >= 14,
+      let tile = state.players[seat].concealed.last
+    {
       winningTile = tile.kind
     } else {
       return nil
@@ -21,7 +25,7 @@ public enum WinContextBuilder {
       melds: player.melds,
       winningTile: winningTile,
       method: selfDrawMethod(state: state, seat: seat),
-      seatWind: Wind(rawValue: seat)!,
+      seatWind: seatWind ?? Wind(rawValue: seat)!,
       roundWind: roundWind,
       flowerCount: player.flowers.count,
       isLastWallTile: state.wall.isEmpty
@@ -33,7 +37,8 @@ public enum WinContextBuilder {
     seat: Int,
     tile: TileKind,
     method: WinMethod,
-    roundWind: Wind = .east
+    roundWind: Wind = .east,
+    seatWind: Wind? = nil
   ) -> WinContext {
     let player = state.players[seat]
     return WinContext(
@@ -41,7 +46,7 @@ public enum WinContextBuilder {
       melds: player.melds,
       winningTile: tile,
       method: method,
-      seatWind: Wind(rawValue: seat)!,
+      seatWind: seatWind ?? Wind(rawValue: seat)!,
       roundWind: roundWind,
       flowerCount: player.flowers.count,
       isLastDiscard: state.wall.isEmpty
@@ -53,10 +58,12 @@ public enum WinContextBuilder {
     seat: Int,
     tile: TileKind,
     method: WinMethod,
-    roundWind: Wind = .east
+    roundWind: Wind = .east,
+    seatWind: Wind? = nil
   ) -> ScoreResult? {
     let context = claim(
-      state: state, seat: seat, tile: tile, method: method, roundWind: roundWind)
+      state: state, seat: seat, tile: tile, method: method, roundWind: roundWind,
+      seatWind: seatWind)
     guard let score = MCRScorer.score(context), score.isLegalWin else { return nil }
     return score
   }
@@ -64,13 +71,21 @@ public enum WinContextBuilder {
   public static func selfDrawScore(
     state: GameState,
     seat: Int,
-    roundWind: Wind = .east
+    roundWind: Wind = .east,
+    seatWind: Wind? = nil
   ) -> ScoreResult? {
-    guard let context = selfDraw(state: state, seat: seat, roundWind: roundWind),
+    guard let context = selfDraw(state: state, seat: seat, roundWind: roundWind, seatWind: seatWind),
       let score = MCRScorer.score(context),
       score.isLegalWin
     else { return nil }
     return score
+  }
+
+  private static func hasDrawn(_ state: GameState, seat: Int) -> Bool {
+    state.events.contains { event in
+      if case let .drew(drawnSeat, _) = event { return drawnSeat == seat }
+      return false
+    }
   }
 
   private static func selfDrawMethod(state: GameState, seat: Int) -> WinMethod {

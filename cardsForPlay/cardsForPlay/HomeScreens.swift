@@ -11,7 +11,7 @@ struct HomeMenu: View {
       HStack {
         VStack(alignment: .leading, spacing: 2) {
           Text("单机国标麻将").font(.title2.bold())
-          Text("快速、练习和第一章可以开打。一圈和十六盘还没有做。")
+          Text("快速、练习、东风圈和第一章可以开打。完整十六盘还没有做。")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -24,6 +24,7 @@ struct HomeMenu: View {
       }
       LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
         menu("快速一盘", "home-quick") { model.beginSetup(mode: .quick) }
+        menu("东风圈", "home-round") { model.beginSetup(mode: .round) }
         menu("练习一盘", "home-practice") { model.beginSetup(mode: .practice) }
         menu("生涯", "home-career") { model.route = .career }
         menu("战绩", "home-stats") { model.route = .stats }
@@ -35,7 +36,7 @@ struct HomeMenu: View {
         menu("牌谱", "home-replays") { model.route = .replays }
         menu("规则要点", "home-help") { model.route = .help }
       }
-      Text("一圈（4 盘）和完整对局（16 盘）会轮转庄家，这一轮还不能开打。")
+      Text("完整对局（16 盘）还不能开打。")
         .font(.caption2)
         .foregroundStyle(.secondary)
     }
@@ -336,6 +337,8 @@ struct ReplayPage: View {
   @State private var notes: [ReplayNote] = []
   @State private var failure: String?
   @State private var difficulty = AIDifficulty.normal
+  @State private var dealer = 0
+  @State private var roundReplay = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -423,9 +426,11 @@ struct ReplayPage: View {
       return
     }
     do {
-      let built = try HandReplay.frames(seed: record.seed, steps: record.steps)
+      dealer = record.dealerSeat ?? 0
+      roundReplay = record.mode == .round
+      let built = try HandReplay.frames(seed: record.seed, steps: record.steps, dealer: dealer)
       frames = built
-      notes = HandReplay.notes(frames: built)
+      notes = HandReplay.notes(frames: built, dealer: dealer)
       difficulty = record.difficulty
       index = 0
     } catch {
@@ -441,17 +446,26 @@ struct ReplayPage: View {
 
   private func phaseText(_ phase: HandPhase) -> String {
     switch phase {
-    case let .awaitingDraw(seat): return "\(PrototypeGame.playerNames[seat])摸牌"
-    case let .awaitingDiscard(seat): return "\(PrototypeGame.playerNames[seat])出牌"
+    case let .awaitingDraw(seat): return "\(replayName(seat))摸牌"
+    case let .awaitingDiscard(seat): return "\(replayName(seat))出牌"
     case .awaitingResponses: return "等待响应"
     case .awaitingRobKong: return "抢杠"
     case .endedDraw: return "流局"
-    case let .endedWin(seat): return "\(PrototypeGame.playerNames[seat])和牌"
+    case let .endedWin(seat): return "\(replayName(seat))和牌"
     }
   }
 
+  private func replayName(_ seat: Int) -> String {
+    guard roundReplay else { return PrototypeGame.playerNames[seat] }
+    let bases = ["你", "阿岚", "静川", "墨衡"]
+    let winds = ["东", "南", "西", "北"]
+    let wind = EastRound.seatWind(seat: seat, dealer: dealer)
+    let tag = seat == dealer ? "\(winds[wind.rawValue])庄" : winds[wind.rawValue]
+    return "\(bases[seat])（\(tag)）"
+  }
+
   private func seatLine(_ seat: Int, state: GameState) -> String {
-    let name = PrototypeGame.playerNames[seat]
+    let name = replayName(seat)
     if reveal {
       let tiles = state.players[seat].concealed.map(\.kind.displayName).joined(separator: " ")
       return "\(name) 暗牌 \(tiles)"

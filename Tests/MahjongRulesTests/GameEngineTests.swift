@@ -4,6 +4,24 @@ import Testing
 
 @Suite("行牌状态机")
 struct GameEngineTests {
+  @Test func rotatedDealerReceivesFourteenTilesAndDiscardsFirst() {
+    let baseline = GameState(seed: 42)
+    let east = GameState(seed: 42, dealer: 0)
+    #expect(east.players[0].concealed.map(\.kind) == baseline.players[0].concealed.map(\.kind))
+    #expect(east.phase == .awaitingDiscard(seat: 0))
+
+    for dealer in 0..<4 {
+      let game = GameState(seed: 42, dealer: dealer)
+      #expect(game.players[dealer].concealed.count == 14)
+      for seat in 0..<4 where seat != dealer {
+        #expect(game.players[seat].concealed.count == 13)
+      }
+      #expect(game.players.flatMap(\.concealed).allSatisfy { !$0.kind.isFlower })
+      #expect(game.physicalTileCount == 144)
+      #expect(game.phase == .awaitingDiscard(seat: dealer))
+    }
+  }
+
   @Test func initialDealReplacesFlowersAndConserves144Tiles() {
     let game = GameState(seed: 42)
     #expect(game.players[0].concealed.count == 14)
