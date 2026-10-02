@@ -22,6 +22,7 @@ struct TileWallTests {
     #expect(TileKind.north.shortName == "N")
     #expect(TileKind.green.shortName == "G")
     #expect(TileKind.chrysanthemum.shortName == "Ch")
+    #expect([TileKind.south, .east].sortedTiles == [.east, .south])
     #expect(TileKind(suit: .bamboo, rank: 0) == nil)
     #expect(TileSet.validateCounts([.east, .east, .east, .east]))
     #expect(!TileSet.validateCounts([.east, .east, .east, .east, .east]))
