@@ -164,28 +164,138 @@ struct GameEngineTests {
     }
   }
 
-  @Test func tenThousandSeededHandsReachAFlowWithoutDeadlock() throws {
+  @Test func tenThousandSeededHandsExerciseClaimsKongsAndSafeWinChecks() throws {
+    var chowCount = 0
+    var pungCount = 0
+    var exposedKongCount = 0
+    var concealedKongCount = 0
+    var addedKongCount = 0
+    var scoreEvaluations = 0
+    var legalWinCount = 0
+
     for seed in 0..<10_000 {
       var game = GameState(seed: UInt64(seed))
+      var rng = SplitMix64(seed: UInt64(seed) ^ 0xD1B5_4A32_D192_ED03)
       var steps = 0
-      while steps < 300 {
+      while steps < 400 {
         #expect(game.physicalTileCount == 144)
         switch game.phase {
         case let .awaitingDiscard(seat):
-          try game.apply(.discard(seat: seat, tile: game.players[seat].concealed[0]))
-        case .awaitingResponses, .awaitingRobKong:
+          let added = game.addedKongIndices(seat: seat)
+          if !added.isEmpty, rng.next() % 3 == 0 {
+            let meldIndex = added[Int(rng.next() % UInt64(added.count))]
+            let kind = game.players[seat].melds[meldIndex].kind
+            let tile = game.players[seat].concealed.first { $0.kind == kind }!
+            try game.apply(.addedKong(seat: seat, meldIndex: meldIndex, tile: tile))
+            addedKongCount += 1
+            break
+          }
+
+          let concealed = game.concealedKongKinds(seat: seat)
+          if !concealed.isEmpty {
+            let kind = concealed[Int(rng.next() % UInt64(concealed.count))]
+            try game.apply(.concealedKong(seat: seat, kind: kind))
+            concealedKongCount += 1
+            break
+          }
+
+          let hand = game.players[seat].concealed
+          let discard = hand[Int(rng.next() % UInt64(hand.count))]
+          try game.apply(.discard(seat: seat, tile: discard))
+
+        case let .awaitingResponses(discarder, discarded):
+          var legalWins: [Claim] = []
+          if steps % 20 == seed % 20 {
+            let seat = (discarder + 1) % 4
+            let player = game.players[seat]
+            let candidate = WinContext(
+              concealedTiles: player.concealed.map(\.kind) + [discarded.kind],
+              melds: player.melds,
+              winningTile: discarded.kind,
+              method: .discard,
+              seatWind: Wind(rawValue: seat)!,
+              roundWind: .east,
+              flowerCount: player.flowers.count
+            )
+            scoreEvaluations += 1
+            if let score = MCRScorer.score(candidate), score.isLegalWin {
+              #expect(score.nonFlowerPoints >= 8)
+              legalWins.append(Claim(seat: seat, type: .win))
+            }
+          }
+          if !legalWins.isEmpty {
+            try game.apply(.resolveClaims(legalWins))
+            legalWinCount += 1
+            break
+          }
+
+          var kongs: [Claim] = []
+          var pungs: [Claim] = []
+          var chows: [Claim] = []
+          for seat in 0..<4 where seat != discarder {
+            if game.canExposedKong(seat: seat, discard: discarded.kind) {
+              kongs.append(Claim(seat: seat, type: .exposedKong))
+            }
+            if game.canPung(seat: seat, discard: discarded.kind) {
+              pungs.append(Claim(seat: seat, type: .pung))
+            }
+            for run in game.legalChows(seat: seat, discard: discarded.kind, discarder: discarder) {
+              chows.append(Claim(seat: seat, type: .chow, chowTiles: run))
+            }
+          }
+
+          let selected: Claim?
+          if !kongs.isEmpty {
+            selected = kongs[Int(rng.next() % UInt64(kongs.count))]
+          } else if !pungs.isEmpty, chows.isEmpty || rng.next() % 3 == 0 {
+            selected = pungs[Int(rng.next() % UInt64(pungs.count))]
+          } else if !chows.isEmpty {
+            selected = chows[Int(rng.next() % UInt64(chows.count))]
+          } else {
+            selected = nil
+          }
+
+          if let selected {
+            try game.apply(.resolveClaims([selected]))
+            switch selected.type {
+            case .chow: chowCount += 1
+            case .pung: pungCount += 1
+            case .exposedKong: exposedKongCount += 1
+            case .win: break
+            }
+          } else {
+            try game.apply(.resolveClaims([]))
+          }
+
+        case .awaitingRobKong:
           try game.apply(.resolveClaims([]))
+
         case let .awaitingDraw(seat):
           try game.apply(.draw(seat: seat))
+
         case .endedDraw, .endedWin:
           break
         }
         steps += 1
-        if game.phase == .endedDraw { break }
+        if case .endedDraw = game.phase { break }
+        if case .endedWin = game.phase { break }
       }
-      #expect(game.phase == .endedDraw)
-      #expect(steps < 300)
+      let ended: Bool
+      switch game.phase {
+      case .endedDraw, .endedWin: ended = true
+      default: ended = false
+      }
+      #expect(ended)
+      #expect(steps < 400)
       #expect(game.physicalTileCount == 144)
     }
+
+    #expect(chowCount > 0)
+    #expect(pungCount > 0)
+    #expect(exposedKongCount > 0)
+    #expect(concealedKongCount > 0)
+    #expect(addedKongCount > 0)
+    #expect(scoreEvaluations > 0)
+    #expect(legalWinCount > 0)
   }
 }
