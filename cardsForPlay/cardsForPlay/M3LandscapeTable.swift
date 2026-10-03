@@ -1,4 +1,5 @@
 import MahjongAI
+import MahjongProgress
 import MahjongRules
 import SpriteKit
 import SwiftUI
@@ -18,6 +19,10 @@ struct M3LandscapeTable: View {
       ZStack {
         SpriteView(scene: boardScene)
           .ignoresSafeArea()
+          .onAppear { boardScene.applyTable(model.tableStyle) }
+          .onChange(of: model.tableStyle) { _, style in
+            boardScene.applyTable(style)
+          }
 
         VStack(spacing: compact ? 3 : 5) {
           statusBar
@@ -167,18 +172,18 @@ struct M3LandscapeTable: View {
       .font(.system(size: compact ? 8 : 9, weight: .bold))
       .lineLimit(1)
       Text(
-        model.isEastRound
+        model.tracksWinds
           ? "\(model.windTag(seat)) · \(profile.difficulty.displayName)"
           : "\(profile.difficulty.displayName) · \(profile.personality.archetype.displayName)"
       )
         .font(.system(size: 6))
         .foregroundStyle(.cyan)
       if orientation == .top {
-        HiddenHand(count: model.game.players[seat].concealed.count, vertical: false)
+        HiddenHand(count: model.game.players[seat].concealed.count, vertical: false, style: model.backStyle)
         MeldRack(melds: model.game.players[seat].melds, vertical: false)
       } else {
         HStack(spacing: 3) {
-          HiddenHand(count: model.game.players[seat].concealed.count, vertical: true)
+          HiddenHand(count: model.game.players[seat].concealed.count, vertical: true, style: model.backStyle)
           MeldRack(melds: model.game.players[seat].melds, vertical: true)
         }
       }
@@ -187,7 +192,7 @@ struct M3LandscapeTable: View {
     .background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 7))
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
-      model.isEastRound
+      model.tracksWinds
         ? "\(role)，\(model.windTag(seat))，\(profile.name)，\(model.game.players[seat].concealed.count)张暗牌"
         : "\(role)，\(profile.name)，\(profile.difficulty.displayName)，\(profile.personality.archetype.displayName)，\(model.game.players[seat].concealed.count)张暗牌"
     )
@@ -225,17 +230,33 @@ struct M3LandscapeTable: View {
         .controlSize(.small)
         .disabled(model.selectedTile == nil)
         .accessibilityIdentifier("discard-button")
+        .accessibilityLabel(discardAccessibilityLabel)
       }
       Spacer(minLength: 0)
     }
     .frame(height: 34)
   }
 
+  private var discardAccessibilityLabel: String {
+    if let tile = model.selectedTile {
+      return "打出\(tile.kind.displayName)"
+    }
+    return "打出选中的牌"
+  }
+
+  private var characterCaption: String {
+    CosmeticCatalog.items(career: model.library.career)
+      .first { $0.id == model.characterStyle }?.title ?? "阿岚"
+  }
+
   private func practiceHints(compact: Bool) -> some View {
     let brief = model.practiceBrief
     return VStack(alignment: .leading, spacing: 1) {
       Text(brief?.waitLine ?? "听 轮到你时再看")
+      if let line = brief?.shantenLine, !line.isEmpty { Text(line) }
       Text(brief?.fanLine ?? "番 轮到你时再看")
+      if let line = brief?.blockedLine, !line.isEmpty { Text(line) }
+      if let line = brief?.conflictLine, !line.isEmpty { Text(line) }
       Text(brief?.dangerLine ?? "危险 点一张牌查看")
     }
     .font(.system(size: compact ? 9 : 10, weight: .medium))
@@ -251,8 +272,12 @@ struct M3LandscapeTable: View {
   private func playerArea(compact: Bool) -> some View {
     HStack(spacing: 7) {
       VStack(spacing: 2) {
-        Text(model.isEastRound ? "自己 · \(model.windTag(0))" : "自己")
+        Text(model.tracksWinds ? "自己 · \(model.windTag(0))" : "自己")
           .font(.caption2.bold())
+        Text(characterCaption)
+          .font(.system(size: 7, weight: .semibold))
+          .foregroundStyle(.yellow)
+          .lineLimit(1)
         MeldRack(melds: model.game.players[0].melds, vertical: true)
         if !model.game.players[0].flowers.isEmpty {
           HStack(spacing: 1) {
@@ -411,7 +436,7 @@ struct M3LandscapeTable: View {
 
   private func resultOverlay(_ result: RoundResult) -> some View {
     VStack(spacing: 8) {
-      if model.isEastRound {
+      if model.tracksWinds {
         Text(model.tableLabel)
           .font(.caption.bold())
           .foregroundStyle(.secondary)
@@ -449,12 +474,17 @@ struct M3LandscapeTable: View {
           Text(careerNote).font(.caption.bold()).foregroundStyle(.yellow)
         }
       }
-      if model.isEastRound {
-        Text(model.roundComplete ? "东风圈总分" : "四家目前总分")
+      if model.tracksWinds {
+        Text(totalsCaption)
           .font(.caption.bold())
         Text(model.cumulativeLine)
           .font(.caption2.monospacedDigit())
           .multilineTextAlignment(.center)
+        if model.roundComplete {
+          Text(model.matchRankLine)
+            .font(.caption2)
+            .multilineTextAlignment(.center)
+        }
       }
       HStack {
         Button("返回主页") { model.returnHome() }
@@ -493,7 +523,11 @@ struct M3LandscapeTable: View {
           volumeSlider("语音", value: model.library.audio.voice) {
             model.updateAudioVolume(\.voice, $0)
           }
-          Text("音乐、音效和普通话短语音分开调节。")
+          Toggle("触觉", isOn: Binding(
+            get: { model.library.audio.hapticsEnabled },
+            set: { model.updateHaptics($0) }
+          ))
+          Text("音乐是程序生成的短循环，把音乐滑到 0 即关闭。没有外链曲库。音效和普通话短语音分开调节。")
             .font(.caption)
         }
         Button("开始新一局", role: .destructive) {
@@ -530,8 +564,13 @@ struct M3LandscapeTable: View {
   }
 
   private func scoreName(_ seat: Int) -> String {
-    if model.isEastRound { return model.windTag(seat) }
+    if model.tracksWinds { return model.windTag(seat) }
     return String(PrototypeGame.playerNames[seat].prefix(2))
+  }
+
+  private var totalsCaption: String {
+    guard model.roundComplete else { return "四家目前总分" }
+    return model.mode == .full ? "十六盘总分" : "东风圈总分"
   }
 
   private func deltaLine(_ deltas: [Int]) -> String {
@@ -546,6 +585,7 @@ private enum SeatOrientation {
 private struct HiddenHand: View {
   let count: Int
   let vertical: Bool
+  var style: String = "back-basic"
 
   var body: some View {
     Group {
@@ -565,13 +605,31 @@ private struct HiddenHand: View {
   private var backs: some View {
     ForEach(0..<count, id: \.self) { _ in
       RoundedRectangle(cornerRadius: 1.5)
-        .fill(.teal.gradient)
+        .fill(backFill)
         .overlay {
           RoundedRectangle(cornerRadius: 1.5)
-            .stroke(.white.opacity(0.55), lineWidth: 0.5)
+            .stroke(style == "back-master" ? Color.yellow.opacity(0.8) : Color.white.opacity(0.55), lineWidth: 0.5)
         }
         .frame(width: vertical ? 13 : 10, height: vertical ? 6 : 15)
     }
+  }
+
+  private var backFill: LinearGradient {
+    if style == "back-master" {
+      return LinearGradient(
+        colors: [
+          Color(red: 0.22, green: 0.08, blue: 0.32),
+          Color(red: 0.55, green: 0.38, blue: 0.12),
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+    }
+    return LinearGradient(
+      colors: [Color.teal, Color(red: 0.05, green: 0.32, blue: 0.30)],
+      startPoint: .top,
+      endPoint: .bottom
+    )
   }
 }
 private struct MeldRack: View {
@@ -824,16 +882,59 @@ private struct PipPattern: View {
         .overlay { Circle().stroke(.black.opacity(0.18), lineWidth: 0.4) }
     case .bamboo:
       if rank == 1 {
-        Image(systemName: "bird.fill")
-          .resizable()
-          .scaledToFit()
-          .foregroundStyle(.green)
+        SparrowMark()
       } else {
         BambooStalk(alternate: !index.isMultiple(of: 2))
       }
     case .characters:
       Color.clear
     }
+  }
+}
+private struct SparrowMark: View {
+  var body: some View {
+    GeometryReader { proxy in
+      let width = proxy.size.width
+      let height = proxy.size.height
+      ZStack {
+        Path { path in
+          path.move(to: CGPoint(x: width * 0.18, y: height * 0.48))
+          path.addLine(to: CGPoint(x: 0, y: height * 0.22))
+          path.addLine(to: CGPoint(x: width * 0.06, y: height * 0.72))
+          path.closeSubpath()
+        }
+        .fill(Color(red: 0.10, green: 0.38, blue: 0.16))
+        Ellipse()
+          .fill(Color(red: 0.13, green: 0.48, blue: 0.22))
+          .frame(width: width * 0.52, height: height * 0.40)
+          .position(x: width * 0.46, y: height * 0.52)
+        Ellipse()
+          .fill(Color.teal.opacity(0.95))
+          .frame(width: width * 0.26, height: height * 0.20)
+          .rotationEffect(.degrees(-16))
+          .position(x: width * 0.48, y: height * 0.50)
+        Circle()
+          .fill(Color(red: 0.08, green: 0.34, blue: 0.16))
+          .frame(width: width * 0.28, height: width * 0.28)
+          .position(x: width * 0.70, y: height * 0.36)
+        Path { path in
+          path.move(to: CGPoint(x: width * 0.80, y: height * 0.32))
+          path.addLine(to: CGPoint(x: width, y: height * 0.38))
+          path.addLine(to: CGPoint(x: width * 0.80, y: height * 0.46))
+          path.closeSubpath()
+        }
+        .fill(Color.orange)
+        Circle()
+          .fill(.black)
+          .frame(width: max(1.2, width * 0.07), height: max(1.2, width * 0.07))
+          .position(x: width * 0.74, y: height * 0.32)
+        Text("一")
+          .font(.system(size: min(width, height) * 0.34, weight: .black, design: .serif))
+          .foregroundStyle(.black.opacity(0.8))
+          .position(x: width * 0.42, y: height * 0.84)
+      }
+    }
+    .accessibilityLabel("一条")
   }
 }
 private struct BambooStalk: View {

@@ -12,6 +12,9 @@ public enum StarCondition: String, Codable, Sendable {
   case anyKong
   case concealedKong
   case basicFan
+  case sevenPairs
+  case honorsKnitted
+  case knittedStraight
 
   public var title: String {
     switch self {
@@ -25,8 +28,17 @@ public enum StarCondition: String, Codable, Sendable {
     case .anyKong: return "有一次杠"
     case .concealedKong: return "有一次暗杠"
     case .basicFan: return "含平和、断幺、缺一门或无字"
+    case .sevenPairs: return "以七对和牌"
+    case .honorsKnitted: return "以全不靠和牌"
+    case .knittedStraight: return "以组合龙和牌"
     }
   }
+}
+
+public enum CareerPuzzle: String, Codable, Sendable {
+  case sevenPairs
+  case honorsKnitted
+  case knittedStraight
 }
 
 public struct HandOutcome: Equatable, Sendable {
@@ -75,6 +87,35 @@ public struct CareerLevel: Identifiable, Sendable {
   public let star1: StarCondition
   public let star2: StarCondition
   public let star3: StarCondition
+  public let puzzle: CareerPuzzle?
+
+  public init(
+    id: String,
+    chapter: Int,
+    index: Int,
+    title: String,
+    briefing: String,
+    difficulty: AIDifficulty,
+    playable: Bool,
+    isBoss: Bool,
+    star1: StarCondition,
+    star2: StarCondition,
+    star3: StarCondition,
+    puzzle: CareerPuzzle? = nil
+  ) {
+    self.id = id
+    self.chapter = chapter
+    self.index = index
+    self.title = title
+    self.briefing = briefing
+    self.difficulty = difficulty
+    self.playable = playable
+    self.isBoss = isBoss
+    self.star1 = star1
+    self.star2 = star2
+    self.star3 = star3
+    self.puzzle = puzzle
+  }
 
   public var starTitles: [String] { [star1.title, star2.title, star3.title] }
 }
@@ -132,6 +173,12 @@ public enum CareerGrader {
     case .basicFan:
       let basic: Set<Fan> = [.allChows, .allSimples, .oneVoidedSuit, .noHonors]
       return outcome.humanWon && outcome.awards.contains { basic.contains($0) }
+    case .sevenPairs:
+      return outcome.humanWon && outcome.awards.contains(.sevenPairs)
+    case .honorsKnitted:
+      return outcome.humanWon && outcome.awards.contains(.lesserHonorsKnitted)
+    case .knittedStraight:
+      return outcome.humanWon && outcome.awards.contains(.knittedStraight)
     }
   }
 }
@@ -226,7 +273,8 @@ public enum CareerCatalog {
         isBoss: offset == 9,
         star1: row.3,
         star2: row.4,
-        star3: row.5
+        star3: row.5,
+        puzzle: Self.puzzle(chapter: number, index: offset + 1)
       )
     }
     return CareerChapter(number: number, title: title, theme: theme, levels: levels)
@@ -261,9 +309,9 @@ public enum CareerCatalog {
   private static let chapterFourRows: [LevelRow] = [
     ("复合番", "和牌通关。非花番到 16 拿第 2 星，到 24 拿第 3 星。", .normal, .win, .minFan16, .minFan24),
     ("不计关系", "和牌时留意番种会不会不计。基础番第 2 星，16 番第 3 星。", .normal, .win, .basicFan, .minFan16),
-    ("七对", "七对只能门前做。和牌通关；门前和拿第 2 星，16 番拿第 3 星。", .normal, .win, .concealedWin, .minFan16),
-    ("全不靠", "全不靠也要门前。和牌通关，门前和第 2 星，基础番第 3 星。", .normal, .win, .concealedWin, .basicFan),
-    ("组合龙", "和牌通关。门前和第 2 星，24 番第 3 星。", .normal, .win, .concealedWin, .minFan24),
+    ("七对", "固定残局：摸进最后一张就是七对，点「和」通关。自摸拿第 2 星，门前和拿第 3 星。", .normal, .sevenPairs, .selfDraw, .concealedWin),
+    ("全不靠", "固定残局：摸进最后一张就是全不靠，点「和」通关。自摸拿第 2 星，门前和拿第 3 星。", .normal, .honorsKnitted, .selfDraw, .concealedWin),
+    ("组合龙", "固定残局：摸进最后一张就是组合龙，点「和」通关。自摸拿第 2 星，门前和拿第 3 星。", .normal, .knittedStraight, .selfDraw, .concealedWin),
     ("门前取舍", "可以全程不鸣牌。和牌通关，门前和第 2 星，16 番第 3 星。", .expert, .win, .concealedWin, .minFan16),
     ("高番拆解", "和牌后拆开看番。16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
     ("特殊牌型", "和牌通关。带一个基础番拿第 2 星，24 番拿第 3 星。", .expert, .win, .basicFan, .minFan24),
@@ -283,4 +331,13 @@ public enum CareerCatalog {
     ("四风预赛", "和牌通关。16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
     ("玄策", "综合型对手。和牌通关，自摸第 2 星，24 番第 3 星。", .expert, .win, .selfDraw, .minFan24),
   ]
+
+  private static func puzzle(chapter: Int, index: Int) -> CareerPuzzle? {
+    switch (chapter, index) {
+    case (4, 3): return .sevenPairs
+    case (4, 4): return .honorsKnitted
+    case (4, 5): return .knittedStraight
+    default: return nil
+    }
+  }
 }

@@ -25,11 +25,16 @@ public struct AudioSettings: Codable, Equatable, Sendable {
   public var effects: Double
   public var voice: Double
 
-  public init(music: Double = 0.25, effects: Double = 0.8, voice: Double = 1) {
+  public var haptics: Bool?
+
+  public init(music: Double = 0.25, effects: Double = 0.8, voice: Double = 1, haptics: Bool? = nil) {
     self.music = music
     self.effects = effects
     self.voice = voice
+    self.haptics = haptics
   }
+
+  public var hapticsEnabled: Bool { haptics ?? true }
 
   public var musicOn: Bool { music > 0.01 }
   public var effectsOn: Bool { effects > 0.01 }
@@ -101,6 +106,7 @@ public struct HandRecord: Codable, Identifiable, Sendable {
   public let ruleVersion: String
   public let careerLevelID: String?
   public let dealerSeat: Int?
+  public let prevailingWind: Int?
 
   public init(
     id: UUID = UUID(),
@@ -124,7 +130,8 @@ public struct HandRecord: Codable, Identifiable, Sendable {
     humanExposedMelds: Int,
     ruleVersion: String = MCRRuleBook.version,
     careerLevelID: String? = nil,
-    dealerSeat: Int? = nil
+    dealerSeat: Int? = nil,
+    prevailingWind: Int? = nil
   ) {
     self.id = id
     self.playedAt = playedAt
@@ -148,6 +155,11 @@ public struct HandRecord: Codable, Identifiable, Sendable {
     self.ruleVersion = ruleVersion
     self.careerLevelID = careerLevelID
     self.dealerSeat = dealerSeat
+    self.prevailingWind = prevailingWind
+  }
+
+  public var roundWind: Wind {
+    Wind(rawValue: prevailingWind ?? Wind.east.rawValue) ?? .east
   }
 
   public var humanWon: Bool { winner == 0 }

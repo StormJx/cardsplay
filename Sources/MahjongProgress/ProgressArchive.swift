@@ -78,17 +78,38 @@ public struct ProgressLibrary: Codable, Sendable {
   public var records: [HandRecord]
   public var career: CareerProgress
   public var audio: AudioSettings
+  public var practice: PracticeSwitches?
+  public var sawGuide: Bool?
+  public var equippedTable: String?
+  public var equippedBack: String?
+  public var equippedCharacter: String?
+  public var equippedMusic: String?
+  public var announceFans: Bool?
 
   public init(
     session: SavedSession? = nil,
     records: [HandRecord] = [],
     career: CareerProgress = CareerProgress(),
-    audio: AudioSettings = AudioSettings()
+    audio: AudioSettings = AudioSettings(),
+    practice: PracticeSwitches? = nil,
+    sawGuide: Bool? = nil,
+    equippedTable: String? = nil,
+    equippedBack: String? = nil,
+    equippedCharacter: String? = nil,
+    equippedMusic: String? = nil,
+    announceFans: Bool? = nil
   ) {
     self.session = session
     self.records = records
     self.career = career
     self.audio = audio
+    self.practice = practice
+    self.sawGuide = sawGuide
+    self.equippedTable = equippedTable
+    self.equippedBack = equippedBack
+    self.equippedCharacter = equippedCharacter
+    self.equippedMusic = equippedMusic
+    self.announceFans = announceFans
   }
 
   public mutating func append(_ record: HandRecord) {

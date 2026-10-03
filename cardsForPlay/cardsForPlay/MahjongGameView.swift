@@ -37,6 +37,8 @@ struct MahjongGameView: View {
         ReplayPage(model: model, recordID: id)
       case .help:
         RulesHelpPage(model: model)
+      case .appearance:
+        AppearancePage(model: model)
       }
     }
     .preferredColorScheme(.dark)
@@ -44,7 +46,7 @@ struct MahjongGameView: View {
       if phase != .active { model.saveForBackground() }
     }
     .onAppear {
-      TableSound.shared.sync(model.library.audio)
+      TableSound.shared.sync(model.library.audio, calm: model.musicIsCalm)
     }
   }
 
@@ -156,6 +158,9 @@ struct MahjongGameView: View {
         .tint(.blue)
         .disabled(model.selectedTile == nil)
         .accessibilityIdentifier("discard-button")
+        .accessibilityLabel(
+          model.selectedTile.map { "打出\($0.kind.displayName)" } ?? "打出选中的牌"
+        )
       }
     }
     .frame(minHeight: 36)
