@@ -24,6 +24,7 @@ enum AppRoute: Equatable {
   case replays
   case replay(UUID)
   case help
+  case appearance
 }
 private struct PrototypeSnapshot: Codable {
   let game: GameState
@@ -112,8 +113,10 @@ final class PrototypeGame: ObservableObject {
     }
     if let session = library.session {
       restore(session)
-      if session.mode == .round, result == nil || !EastRound.isFinalHand(session.roundHandIndex ?? 0) {
-        message = "可以继续这一圈"
+      if session.mode == .round || session.mode == .full,
+        result == nil || !Self.matchFinished(session)
+      {
+        message = session.mode == .full ? "可以继续这十六盘" : "可以继续这一圈"
       } else {
         message = session.winner == nil && !session.drawn ? "可以继续上次牌局" : "上次牌局已经结束"
       }
@@ -141,28 +144,44 @@ final class PrototypeGame: ObservableObject {
     switch pendingMode {
     case .practice: return "开始练习"
     case .round: return "开始一圈"
+    case .full: return "开始十六盘"
     default: return "开始一盘"
     }
   }
 
   var setupNote: String? {
-    guard pendingMode == .round else { return nil }
-    return "连续四盘，圈风保持东。第一盘庄家由本圈种子决定，之后每盘交给下家；流局也轮转，没有庄家加分。"
+    switch pendingMode {
+    case .round:
+      return "连续四盘，圈风保持东。第一盘庄家由本圈种子决定，之后每盘交给下家；流局也轮转，没有庄家加分。"
+    case .full:
+      return "东南西北四圈，共 16 盘。每盘结束后庄家交给下家，每四盘换圈风。流局也轮转，没有连庄加赛。"
+    default:
+      return nil
+    }
   }
 
+  var tracksWinds: Bool { mode == .round || mode == .full }
   var isEastRound: Bool { mode == .round }
 
   var roundCanContinue: Bool {
-    mode == .round && result != nil && !EastRound.isFinalHand(roundHandIndex)
+    tracksWinds && result != nil && !isLastScheduledHand
   }
 
   var roundComplete: Bool {
-    mode == .round && result != nil && EastRound.isFinalHand(roundHandIndex)
+    tracksWinds && result != nil && isLastScheduledHand
+  }
+
+  private var isLastScheduledHand: Bool {
+    mode == .full ? FullMatch.isFinalHand(roundHandIndex) : EastRound.isFinalHand(roundHandIndex)
+  }
+
+  var currentRoundWind: Wind {
+    mode == .full ? FullMatch.roundWind(handIndex: roundHandIndex) : .east
   }
 
   var dealerSeat: Int {
-    guard mode == .round else { return 0 }
-    return EastRound.dealer(handIndex: roundHandIndex, initialDealer: roundInitialDealer)
+    guard tracksWinds else { return 0 }
+    return FullMatch.dealer(handIndex: roundHandIndex, initialDealer: roundInitialDealer)
   }
 
   func seatWind(_ seat: Int) -> Wind {
@@ -171,17 +190,22 @@ final class PrototypeGame: ObservableObject {
 
   func windTag(_ seat: Int) -> String {
     let wind = ["东", "南", "西", "北"][seatWind(seat).rawValue]
-    return seat == dealerSeat && mode == .round ? "\(wind)庄" : wind
+    return seat == dealerSeat && tracksWinds ? "\(wind)庄" : wind
   }
 
   func playerLabel(_ seat: Int) -> String {
-    guard mode == .round else { return Self.playerNames[seat] }
+    guard tracksWinds else { return Self.playerNames[seat] }
     let base = ["你", "阿岚", "静川", "墨衡"][seat]
     return "\(base)（\(windTag(seat))）"
   }
 
   var yourWindLabel: String {
-    mode == .round ? "你：\(windTag(0))" : "你：东"
+    tracksWinds ? "你：\(windTag(0))" : "你：东"
+  }
+
+  var matchRankLine: String {
+    let ranks = FullMatch.ranks(cumulativeScores)
+    return (0..<4).map { "\(playerLabel($0))第\(ranks[$0])" }.joined(separator: " ")
   }
 
   var cumulativeLine: String {
@@ -194,6 +218,7 @@ final class PrototypeGame: ObservableObject {
   var primaryResultButton: String {
     if roundCanContinue { return "下一盘" }
     if careerLevelID != nil { return "重试本关" }
+    if mode == .full { return "再来十六盘" }
     if mode == .round { return "再来一圈" }
     return "再来一局"
   }
@@ -203,6 +228,10 @@ final class PrototypeGame: ObservableObject {
       return "\(level.chapter)-\(level.index) \(level.title)"
     }
     if mode == .round { return "东风圈 \(roundHandIndex + 1)/4" }
+    if mode == .full {
+      let wind = ["东", "南", "西", "北"][currentRoundWind.rawValue]
+      return "\(wind)风圈 \(FullMatch.handInRound(handIndex: roundHandIndex))/4 · \(roundHandIndex + 1)/16"
+    }
     return mode.displayName
   }
 
@@ -211,7 +240,7 @@ final class PrototypeGame: ObservableObject {
   var practiceBrief: PracticeBrief? {
     guard practiceHints, result == nil else { return nil }
     let selected = selectedTile?.kind.rawValue ?? -1
-    let key = "\(game.events.count)#\(game.phase)#\(selected)#\(game.players[0].concealed.map(\.kind.rawValue))"
+    let key = "\(game.events.count)#\(game.phase)#\(selected)#\(game.players[0].concealed.map(\.kind.rawValue))#\(practiceSwitches)"
     if let practiceBriefCache, practiceBriefCache.key == key { return practiceBriefCache.brief }
     let player = game.players[0]
     let brief = PracticeCoach.brief(
@@ -224,8 +253,9 @@ final class PrototypeGame: ObservableObject {
       scores: cumulativeScores,
       seat: 0,
       seatWind: seatWind(0),
-      roundWind: EastRound.roundWind,
-      unseen: { PublicInfo.unseenCount(state: self.game, kind: $0) }
+      roundWind: currentRoundWind,
+      unseen: { PublicInfo.unseenCount(state: self.game, kind: $0) },
+      switches: practiceSwitches
     )
     practiceBriefCache = (key, brief)
     return brief
@@ -250,6 +280,10 @@ final class PrototypeGame: ObservableObject {
     careerLevelID = level.id
     practiceHints = false
     selectedDifficulty = level.difficulty
+    if let puzzle = level.puzzle {
+      startPuzzle(puzzle, difficulty: level.difficulty)
+      return
+    }
     startGame(difficulty: level.difficulty)
   }
 
@@ -289,7 +323,7 @@ final class PrototypeGame: ObservableObject {
 
   func updateAudio(_ audio: AudioSettings) {
     library.audio = audio
-    TableSound.shared.sync(audio)
+    TableSound.shared.sync(audio, calm: musicIsCalm)
     persist()
   }
 
@@ -306,8 +340,10 @@ final class PrototypeGame: ObservableObject {
     }
     driveTask?.cancel()
     showGameSetup = true
-    if mode != .round {
-      pendingMode = mode == .practice ? .practice : .quick
+    if mode == .practice {
+      pendingMode = .practice
+    } else if mode != .round, mode != .full {
+      pendingMode = .quick
     }
     message = "请选择电脑难度"
   }
@@ -321,7 +357,7 @@ final class PrototypeGame: ObservableObject {
   }
 
   func startNextHand() {
-    guard mode == .round, !EastRound.isFinalHand(roundHandIndex) else { return }
+    guard tracksWinds, !isLastScheduledHand else { return }
     driveTask?.cancel()
     roundHandIndex += 1
     handSeed = Self.freshSeed()
@@ -336,7 +372,7 @@ final class PrototypeGame: ObservableObject {
     showGameSetup = false
     aiDecisionLogs = [:]
     careerNote = nil
-    message = "东风圈第 \(roundHandIndex + 1) 盘，\(playerLabel(dealerSeat))先出牌"
+    message = openingMessage
     persist()
     scheduleDrive()
   }
@@ -348,7 +384,7 @@ final class PrototypeGame: ObservableObject {
     if mode != .career { careerLevelID = nil }
     practiceHints = mode == .practice
     handSeed = Self.freshSeed()
-    if mode == .round {
+    if tracksWinds {
       roundHandIndex = 0
       roundInitialDealer = Int(handSeed % 4)
       game = GameState(seed: handSeed, dealer: dealerSeat)
@@ -370,10 +406,10 @@ final class PrototypeGame: ObservableObject {
     sessionActive = true
     aiDecisionLogs = [:]
     cumulativeScores = [0, 0, 0, 0]
-    message = mode == .round
-      ? "东风圈第 1 盘，\(playerLabel(dealerSeat))先出牌"
+    message = tracksWinds
+      ? openingMessage
       : "\(difficulty.displayName)难度开局，你是东家"
-    TableSound.shared.sync(library.audio)
+    TableSound.shared.sync(library.audio, calm: musicIsCalm)
     persist()
     scheduleDrive()
   }
@@ -717,17 +753,17 @@ final class PrototypeGame: ObservableObject {
 
   private func selfDrawScore(seat: Int) -> ScoreResult? {
     WinContextBuilder.selfDrawScore(
-      state: game, seat: seat, roundWind: EastRound.roundWind, seatWind: seatWind(seat))
+      state: game, seat: seat, roundWind: currentRoundWind, seatWind: seatWind(seat))
   }
 
   private func selfDrawContext(seat: Int) -> WinContext? {
     WinContextBuilder.selfDraw(
-      state: game, seat: seat, roundWind: EastRound.roundWind, seatWind: seatWind(seat))
+      state: game, seat: seat, roundWind: currentRoundWind, seatWind: seatWind(seat))
   }
 
   private func legalScore(seat: Int, tile: TileKind, method: WinMethod) -> ScoreResult? {
     WinContextBuilder.legalScore(
-      state: game, seat: seat, tile: tile, method: method, roundWind: EastRound.roundWind,
+      state: game, seat: seat, tile: tile, method: method, roundWind: currentRoundWind,
       seatWind: seatWind(seat))
   }
 
@@ -756,7 +792,7 @@ final class PrototypeGame: ObservableObject {
       exposedFlowers: game.players.map { $0.flowers.map(\.kind) },
       wallRemaining: game.wall.remainingCount,
       scores: cumulativeScores,
-      roundWind: EastRound.roundWind,
+      roundWind: currentRoundWind,
       actionNumber: game.events.count
     )
   }
@@ -783,7 +819,13 @@ final class PrototypeGame: ObservableObject {
     result = RoundResult(winner: winner, discarder: discarder, score: score, deltas: deltas)
     actions = []
     message = "\(playerLabel(winner))和牌"
-    TableSound.shared.speak("和", settings: library.audio)
+    var spoken = "和"
+    if winner == 0, library.announceFans == true,
+      let fan = score.awards.first(where: { $0.fan != .flower })?.fan.name
+    {
+      spoken = "和，\(fan)"
+    }
+    TableSound.shared.speak(spoken, settings: library.audio)
     archiveFinished(
       winner: winner, discarder: discarder, score: score, method: method, deltas: deltas,
       drawn: false)
@@ -835,7 +877,8 @@ final class PrototypeGame: ObservableObject {
       concealedKongCount: counts.concealedKongs,
       humanExposedMelds: exposed,
       careerLevelID: careerLevelID,
-      dealerSeat: dealerSeat
+      dealerSeat: dealerSeat,
+      prevailingWind: currentRoundWind.rawValue
     )
     library.append(record)
     lastRecordID = record.id
@@ -866,6 +909,9 @@ final class PrototypeGame: ObservableObject {
     if case .discard = command {
       TableSound.shared.tap(library.audio)
     }
+    if case .resolveClaims = command {
+      TableSound.shared.claim(library.audio)
+    }
     speakLatestAction()
     persist()
   }
@@ -885,6 +931,109 @@ final class PrototypeGame: ObservableObject {
     default:
       break
     }
+  }
+
+  private var openingMessage: String {
+    let starter = "\(playerLabel(dealerSeat))先出牌"
+    if mode == .full {
+      let wind = ["东", "南", "西", "北"][currentRoundWind.rawValue]
+      return "\(wind)风圈第 \(FullMatch.handInRound(handIndex: roundHandIndex)) 盘，共 16 盘，\(starter)"
+    }
+    if mode == .round {
+      return "东风圈第 \(roundHandIndex + 1) 盘，\(starter)"
+    }
+    return starter
+  }
+
+  private func startPuzzle(_ puzzle: CareerPuzzle, difficulty: AIDifficulty) {
+    driveTask?.cancel()
+    selectedDifficulty = difficulty
+    mode = .career
+    practiceHints = false
+    roundHandIndex = 0
+    roundInitialDealer = 0
+    handSeed = 0
+    game = CareerDeals.opening(puzzle)
+    steps = []
+    canReplay = false
+    result = nil
+    lastMethod = nil
+    careerNote = nil
+    lastRecordID = nil
+    actions = []
+    selectedTile = nil
+    isPaused = false
+    showGameSetup = false
+    sessionActive = true
+    route = .table
+    aiDecisionLogs = [:]
+    cumulativeScores = [0, 0, 0, 0]
+    message = "固定残局。摸进的牌可以和，点「和」。"
+    TableSound.shared.sync(library.audio, calm: musicIsCalm)
+    persist()
+    scheduleDrive()
+  }
+
+  var practiceSwitches: PracticeSwitches {
+    get { library.practice ?? PracticeSwitches() }
+    set {
+      library.practice = newValue
+      practiceBriefCache = nil
+      persist()
+    }
+  }
+
+  var needsGuide: Bool { library.sawGuide != true }
+
+  func completeGuide() {
+    library.sawGuide = true
+    persist()
+  }
+
+  var musicIsCalm: Bool {
+    (library.equippedMusic ?? CosmeticCatalog.starterMusic) == "music-calm"
+  }
+
+  var tableStyle: String { library.equippedTable ?? CosmeticCatalog.starterTable }
+  var backStyle: String { library.equippedBack ?? CosmeticCatalog.starterBack }
+  var characterStyle: String { library.equippedCharacter ?? CosmeticCatalog.starterCharacter }
+
+  func equip(_ id: String) {
+    guard CosmeticCatalog.isUnlocked(id, career: library.career) else { return }
+    if id == "voice-fans" {
+      library.announceFans = true
+      persist()
+      return
+    }
+    guard let item = CosmeticCatalog.items(career: library.career).first(where: { $0.id == id })
+    else { return }
+    switch item.kind {
+    case .table: library.equippedTable = id
+    case .back: library.equippedBack = id
+    case .character: library.equippedCharacter = id
+    case .music:
+      library.equippedMusic = id
+      TableSound.shared.sync(library.audio, calm: id == "music-calm")
+    }
+    persist()
+  }
+
+  func updateHaptics(_ enabled: Bool) {
+    var audio = library.audio
+    audio.haptics = enabled
+    updateAudio(audio)
+  }
+
+  func setPracticeSwitch(_ key: WritableKeyPath<PracticeSwitches, Bool>, _ value: Bool) {
+    var switches = practiceSwitches
+    switches[keyPath: key] = value
+    practiceSwitches = switches
+  }
+
+  private static func matchFinished(_ session: SavedSession) -> Bool {
+    let index = session.roundHandIndex ?? 0
+    if session.mode == .full { return FullMatch.isFinalHand(index) }
+    return EastRound.isFinalHand(index)
   }
 
   private func waitForAI() async {
@@ -917,8 +1066,8 @@ final class PrototypeGame: ObservableObject {
       careerLevelID: careerLevelID,
       practiceHints: practiceHints,
       lastRecordID: lastRecordID,
-      roundHandIndex: mode == .round ? roundHandIndex : nil,
-      roundInitialDealer: mode == .round ? roundInitialDealer : nil
+      roundHandIndex: tracksWinds ? roundHandIndex : nil,
+      roundInitialDealer: tracksWinds ? roundInitialDealer : nil
     )
   }
 

@@ -26,6 +26,11 @@ struct HomeMenu: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(red: 0.04, green: 0.16, blue: 0.12))
+    .overlay {
+      if model.needsGuide {
+        GuideCover(model: model)
+      }
+    }
   }
 
   private var hasUnfinishedSession: Bool {
@@ -33,6 +38,9 @@ struct HomeMenu: View {
     let handOpen = session.winner == nil && !session.drawn
     if session.mode == .round {
       return handOpen || !EastRound.isFinalHand(session.roundHandIndex ?? 0)
+    }
+    if session.mode == .full {
+      return handOpen || !FullMatch.isFinalHand(session.roundHandIndex ?? 0)
     }
     return handOpen
   }
@@ -46,6 +54,44 @@ struct HomeMenu: View {
     .buttonStyle(.borderedProminent)
     .tint(.teal)
     .accessibilityIdentifier(identifier)
+    .accessibilityLabel(title)
+  }
+}
+
+struct GuideCover: View {
+  @ObservedObject var model: PrototypeGame
+  @State private var step = 0
+
+  private let steps = [
+    "牌区：你的牌在下方，对家在上，上家在左，下家在右。",
+    "摸打：点一张牌，再点「打出」。",
+    "吃碰杠：轮到你时，只出现现在合法的按钮。",
+    "8 番：不够 8 番不能和。花牌不计入这 8 番。",
+    "结算：和牌后看番种和分数，可以从牌谱再看一遍。",
+  ]
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("先看五步").font(.headline)
+      Text(steps[step]).font(.subheadline)
+      HStack {
+        Button("跳过") { model.completeGuide() }
+        Spacer()
+        Button(step == steps.count - 1 ? "开始" : "下一步") {
+          if step == steps.count - 1 {
+            model.completeGuide()
+          } else {
+            step += 1
+          }
+        }
+        .buttonStyle(.borderedProminent)
+      }
+    }
+    .padding(16)
+    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+    .padding(20)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("新手引导。\(steps[step])")
   }
 }
 
@@ -56,7 +102,9 @@ struct MoreMenu: View {
     ScrollView {
       VStack(spacing: 10) {
         pageHeader("更多", model: model)
+        menu("完整十六盘", "home-full") { model.beginSetup(mode: .full) }
         menu("练习一盘", "home-practice") { model.beginSetup(mode: .practice) }
+        menu("外观", "home-appearance") { model.route = .appearance }
         menu("战绩", "home-stats") { model.route = .stats }
         menu("成就", "home-achievements") { model.route = .achievements }
         menu("番种图鉴", "home-guides") {
@@ -87,6 +135,62 @@ struct MoreMenu: View {
   }
 }
 
+struct AppearancePage: View {
+  @ObservedObject var model: PrototypeGame
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 8) {
+        pageHeader("外观", model: model, backTitle: "返回更多") { model.route = .more }
+        Text("牌桌、牌背、角色和程序音乐。生涯星级和 Boss 解锁，不改规则。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        ForEach(CosmeticCatalog.items(career: model.library.career)) { item in
+          Button {
+            model.equip(item.id)
+          } label: {
+            HStack {
+              VStack(alignment: .leading, spacing: 2) {
+                Text(item.title).font(.subheadline.bold())
+                Text(item.unlocked ? item.detail : "尚未解锁")
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
+              }
+              Spacer()
+              Text(equipped(item) ? "使用中" : (item.unlocked ? "可用" : "锁定"))
+                .font(.caption.bold())
+                .foregroundStyle(item.unlocked ? .yellow : .orange)
+            }
+          }
+          .buttonStyle(.plain)
+          .disabled(!item.unlocked)
+          .padding(8)
+          .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 10))
+        }
+      }
+      .padding(16)
+      .frame(maxWidth: 420)
+      .frame(maxWidth: .infinity)
+    }
+    .background(Color(red: 0.04, green: 0.16, blue: 0.12))
+  }
+
+  private func equipped(_ item: CosmeticItem) -> Bool {
+    switch item.id {
+    case model.tableStyle, model.backStyle, model.characterStyle:
+      return true
+    case "music-calm":
+      return model.musicIsCalm
+    case "music-basic":
+      return !model.musicIsCalm
+    case "voice-fans":
+      return model.library.announceFans == true
+    default:
+      return false
+    }
+  }
+}
+
 struct SettingsPage: View {
   @ObservedObject var model: PrototypeGame
 
@@ -113,6 +217,19 @@ struct SettingsPage: View {
         volumeSlider("语音", value: model.library.audio.voice) {
           model.updateAudioVolume(\.voice, $0)
         }
+        Text("音乐是程序生成的短循环，滑到 0 即关闭。没有外链曲库。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        Toggle("触觉", isOn: Binding(
+          get: { model.library.audio.hapticsEnabled },
+          set: { model.updateHaptics($0) }
+        ))
+        Text("练习提示").font(.headline)
+        practiceToggle("听牌", \.waits)
+        practiceToggle("向听和有效牌", \.recommendation)
+        practiceToggle("剩余张数", \.remaining)
+        practiceToggle("番种", \.fans)
+        practiceToggle("危险度", \.danger)
       }
       .padding(16)
       .frame(maxWidth: 360)
@@ -120,6 +237,15 @@ struct SettingsPage: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(red: 0.04, green: 0.16, blue: 0.12))
+  }
+
+  private func practiceToggle(
+    _ title: String, _ key: WritableKeyPath<PracticeSwitches, Bool>
+  ) -> some View {
+    Toggle(title, isOn: Binding(
+      get: { model.practiceSwitches[keyPath: key] },
+      set: { model.setPracticeSwitch(key, $0) }
+    ))
   }
 
   private func speedButton(_ title: String, _ delay: Double) -> some View {
@@ -230,7 +356,7 @@ struct StatsPage: View {
           ForEach(["全部", "快速", "完整", "生涯", "练习"], id: \.self) { Text($0) }
         }
         .pickerStyle(.segmented)
-        Text("数字由已保存牌谱重算。练习和快速分开。完整对局还没有牌可记。")
+        Text("数字由已保存牌谱重算。练习、快速、东风圈和完整十六盘分开记。")
           .font(.caption2)
           .foregroundStyle(.secondary)
         grid([
@@ -430,6 +556,9 @@ struct ReplayPage: View {
   @State private var roundReplay = false
   @State private var playing = false
   @State private var stopAtChecks = true
+  @State private var useCurrentRules = false
+  @State private var recordedRule = ""
+  @State private var currentRule = ""
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -466,6 +595,14 @@ struct ReplayPage: View {
     return VStack(alignment: .leading, spacing: 6) {
       Text("第 \(index)/\(frames.count - 1) 步 · \(phaseText(frame.state.phase))")
         .font(.headline)
+      Text(useCurrentRules ? currentRule : recordedRule)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+      Picker("规则", selection: $useCurrentRules) {
+        Text("按原规则重放").tag(false)
+        Text("按当前规则重分析").tag(true)
+      }
+      .pickerStyle(.segmented)
       if reveal {
         Text("全牌揭示只用于结束后的分析。电脑当时不知道这些暗牌。")
           .font(.caption2)
@@ -493,6 +630,12 @@ struct ReplayPage: View {
             }.joined(separator: " · ")
         )
         .font(.caption2)
+        let study = HandReplay.studyLine(state: frame.state, scores: [0, 0, 0, 0])
+        if !study.isEmpty {
+          Text("出牌对照：\(study)")
+            .font(.caption2)
+            .foregroundStyle(.cyan)
+        }
       }
       let here = notes.filter { $0.frameIndex == index }
       if !here.isEmpty {
@@ -580,6 +723,9 @@ struct ReplayPage: View {
       let built = try HandReplay.frames(seed: record.seed, steps: record.steps, dealer: dealer)
       frames = built
       notes = HandReplay.notes(frames: built, dealer: dealer)
+      let readings = HandReplay.readings(record: record)
+      recordedRule = readings.recorded.detail
+      currentRule = readings.current.detail
       difficulty = record.difficulty
       index = 0
     } catch {

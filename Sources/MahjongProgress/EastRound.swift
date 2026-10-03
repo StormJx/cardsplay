@@ -24,3 +24,40 @@ public enum EastRound {
     return zip(totals, deltas).map(+)
   }
 }
+
+/// East, South, West, and North: sixteen hands. No repeat-dealer extra hand.
+public enum FullMatch {
+  public static let roundCount = 4
+  public static let handsPerRound = EastRound.handCount
+  public static let handCount = roundCount * handsPerRound
+  public static let winds: [Wind] = [.east, .south, .west, .north]
+
+  public static func roundIndex(handIndex: Int) -> Int {
+    min(roundCount - 1, max(0, handIndex) / handsPerRound)
+  }
+
+  public static func roundWind(handIndex: Int) -> Wind {
+    winds[roundIndex(handIndex: handIndex)]
+  }
+
+  public static func handInRound(handIndex: Int) -> Int {
+    (max(0, handIndex) % handsPerRound) + 1
+  }
+
+  public static func dealer(handIndex: Int, initialDealer: Int) -> Int {
+    EastRound.dealer(handIndex: handIndex, initialDealer: initialDealer)
+  }
+
+  public static func seatWind(seat: Int, dealer: Int) -> Wind {
+    EastRound.seatWind(seat: seat, dealer: dealer)
+  }
+
+  public static func isFinalHand(_ handIndex: Int) -> Bool {
+    handIndex >= handCount - 1
+  }
+
+  /// 1 is the best score. Equal scores share a rank.
+  public static func ranks(_ scores: [Int]) -> [Int] {
+    scores.map { score in scores.filter { $0 > score }.count + 1 }
+  }
+}

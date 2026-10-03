@@ -12,10 +12,42 @@ public struct PracticeDanger: Hashable, Sendable {
   public let reason: String
 }
 
+public struct PracticeSwitches: Codable, Equatable, Sendable {
+  public var waits: Bool
+  public var recommendation: Bool
+  public var remaining: Bool
+  public var fans: Bool
+  public var danger: Bool
+
+  public init(
+    waits: Bool = true,
+    recommendation: Bool = true,
+    remaining: Bool = true,
+    fans: Bool = true,
+    danger: Bool = true
+  ) {
+    self.waits = waits
+    self.recommendation = recommendation
+    self.remaining = remaining
+    self.fans = fans
+    self.danger = danger
+  }
+}
+
+public struct DiscardStudy: Equatable, Sendable {
+  public let tile: TileKind
+  public let shanten: Int
+  public let usefulTiles: Int
+  public let estimatedFan: Int
+}
+
 public struct PracticeBrief: Equatable, Sendable {
   public let waitLine: String
   public let fanLine: String
   public let dangerLine: String
+  public let shantenLine: String
+  public let blockedLine: String
+  public let conflictLine: String
 }
 
 /// Practice hints from the player's tiles and the public table. Opponent concealed tiles are not an input.
@@ -31,7 +63,8 @@ public enum PracticeCoach {
     seat: Int,
     seatWind: Wind,
     roundWind: Wind,
-    unseen: (TileKind) -> Int
+    unseen: (TileKind) -> Int,
+    switches: PracticeSwitches = PracticeSwitches()
   ) -> PracticeBrief {
     let complete = (4 - melds.count) * 3 + 2
     let discard: TileKind?
@@ -54,13 +87,126 @@ public enum PracticeCoach {
 
     let held = (discard.map { removed($0, from: concealed) } ?? concealed) + melds.flatMap(\.tiles)
     let dangerTile = discarding ? (selected ?? discard) : nil
+    let studies = discarding ? discardStudies(
+      concealed: concealed, melds: melds, seatWind: seatWind, roundWind: roundWind, unseen: unseen
+    ) : []
+    let blocked = blockedFanNames(melds: melds)
+    let conflicts = conflictingFanNames(tiles: concealed + melds.flatMap(\.tiles), melds: melds)
     return PracticeBrief(
-      waitLine: waitLine(discard: discard, waits: waits, discarding: discarding),
-      fanLine: fanLine(waits: waits, held: held),
-      dangerLine: dangerLine(
-        tile: dangerTile, discards: discards, exposedMelds: exposedMelds, scores: scores,
-        seat: seat, unseen: unseen)
+      waitLine: switches.waits
+        ? waitLine(discard: discard, waits: waits, discarding: discarding, showRemaining: switches.remaining)
+        : "听 已关闭",
+      fanLine: switches.fans
+        ? fanLine(waits: waits, held: held)
+        : "番 已关闭",
+      dangerLine: switches.danger
+        ? dangerLine(
+          tile: dangerTile, discards: discards, exposedMelds: exposedMelds, scores: scores,
+          seat: seat, unseen: unseen)
+        : "危险 已关闭",
+      shantenLine: switches.recommendation ? shantenLine(studies) : "",
+      blockedLine: switches.fans && !blocked.isEmpty ? "副露后打不到 " + blocked.joined(separator: "、") : "",
+      conflictLine: switches.fans && !conflicts.isEmpty ? "和当前牌冲突 " + conflicts.joined(separator: "、") : ""
     )
+  }
+
+  public static func discardStudies(
+    concealed: [TileKind],
+    melds: [Meld],
+    seatWind: Wind,
+    roundWind: Wind,
+    unseen: (TileKind) -> Int
+  ) -> [DiscardStudy] {
+    let complete = (4 - melds.count) * 3 + 2
+    guard concealed.count == complete else { return [] }
+    return Set(concealed).sorted { $0.rawValue < $1.rawValue }.map { kind in
+      let kept = removed(kind, from: concealed)
+      let waits = waitingTiles(
+        concealed: concealed, removing: kind, melds: melds, seatWind: seatWind,
+        roundWind: roundWind, unseen: unseen)
+      let useful = usefulTiles(base: kept, melds: melds.count, unseen: unseen)
+      return DiscardStudy(
+        tile: kind,
+        shanten: shanten(of: kept, meldCount: melds.count),
+        usefulTiles: waits.isEmpty ? useful : waits.reduce(0) { $0 + max(0, $1.remaining) },
+        estimatedFan: waits.map(\.nonFlowerPoints).max() ?? 0
+      )
+    }
+  }
+
+  public static func shanten(of tiles: [TileKind], meldCount: Int) -> Int {
+    var counts = Array(repeating: 0, count: 34)
+    for tile in tiles where tile.rawValue < 34 { counts[tile.rawValue] += 1 }
+    let need = max(0, 4 - meldCount)
+    let pairCount = counts.reduce(0) { $0 + $1 / 2 }
+    var memo: [String: Int] = [:]
+    let standard = arrange(
+      &counts, index: 0, melds: 0, partials: 0, pair: false, need: need, memo: &memo)
+    let pairs = meldCount == 0 ? 6 - min(7, pairCount) : 8
+    return min(standard, pairs)
+  }
+
+  public static func blockedFanNames(melds: [Meld]) -> [String] {
+    var names: [String] = []
+    if melds.contains(where: \.isExposed) {
+      names += ["七对", "十三幺", "全不靠", "七星不靠", "门前清", "不求人"]
+    }
+    if melds.count > 1 { names.append("组合龙") }
+    return names
+  }
+
+  public static func newlyBlocked(before: [Meld], after: [Meld]) -> [String] {
+    let old = Set(blockedFanNames(melds: before))
+    return blockedFanNames(melds: after).filter { !old.contains($0) }
+  }
+
+  public static func droppedBelowEight(before: Int, after: Int) -> Bool {
+    before >= 8 && after < 8
+  }
+
+  public static func conflictingFanNames(tiles: [TileKind], melds: [Meld]) -> [String] {
+    let all = tiles + melds.flatMap(\.tiles)
+    var names: [String] = []
+    if Set(all.compactMap(\.suit)).count > 1 { names.append("清一色") }
+    if all.contains(where: \.isHonor) { names.append("无字") }
+    if all.contains(where: \.isTerminalOrHonor) { names.append("断幺") }
+    if melds.contains(where: \.isExposed) { names.append("门前清") }
+    let counts = Dictionary(grouping: all, by: { $0 }).mapValues(\.count)
+    if counts.values.filter({ $0 >= 3 }).count >= 2 { names.append("平和") }
+    if counts.values.filter({ $0 >= 2 }).count >= 5 { names.append("碰碰和") }
+    return names
+  }
+
+  public static func bestListedFan(
+    concealed: [TileKind],
+    melds: [Meld],
+    seatWind: Wind,
+    roundWind: Wind
+  ) -> Int {
+    let complete = (4 - melds.count) * 3 + 2
+    let unseen: (TileKind) -> Int = { _ in 1 }
+    if concealed.count == complete - 1 {
+      return waitingTiles(
+        concealed: concealed, removing: nil, melds: melds, seatWind: seatWind,
+        roundWind: roundWind, unseen: unseen
+      ).map(\.nonFlowerPoints).max() ?? 0
+    }
+    guard concealed.count == complete else { return 0 }
+    return Set(concealed).map { kind in
+      waitingTiles(
+        concealed: concealed, removing: kind, melds: melds, seatWind: seatWind,
+        roundWind: roundWind, unseen: unseen
+      ).map(\.nonFlowerPoints).max() ?? 0
+    }.max() ?? 0
+  }
+
+  public static func situationLine(scores: [Int], seat: Int) -> String {
+    guard scores.count == 4, seat < 4 else { return "局况 分数还没记" }
+    let mine = scores[seat]
+    let ahead = scores.filter { $0 > mine }.count
+    if ahead == 0, scores.allSatisfy({ $0 == mine }) { return "局况 四家同分" }
+    if ahead == 0 { return "局况 你领先" }
+    return "局况 你落后\(ahead)家"
   }
 
   public static func waitingTiles(
@@ -240,13 +386,104 @@ public enum PracticeCoach {
     return copy
   }
 
-  private static func waitLine(discard: TileKind?, waits: [PracticeWait], discarding: Bool) -> String {
-    let listed = waits.map { "\(name($0.tile))剩\($0.remaining)" }.joined(separator: " · ")
+  private static func waitLine(
+    discard: TileKind?, waits: [PracticeWait], discarding: Bool, showRemaining: Bool
+  ) -> String {
+    let listed = waits.map {
+      showRemaining ? "\(name($0.tile))剩\($0.remaining)" : name($0.tile)
+    }.joined(separator: " · ")
     if let discard {
       return waits.isEmpty ? "打出\(name(discard))后未听" : "打出\(name(discard))后听 \(listed)"
     }
     if discarding { return "未听牌" }
     return waits.isEmpty ? "未听牌" : "听 \(listed)"
+  }
+
+  private static func shantenLine(_ studies: [DiscardStudy]) -> String {
+    guard !studies.isEmpty else { return "向听 轮到你出牌时看每张牌" }
+    let listed = studies.prefix(6).map {
+      "\(name($0.tile)) \($0.shanten)向听 有效\($0.usefulTiles) 约\($0.estimatedFan)番"
+    }.joined(separator: " · ")
+    return "向听 " + listed
+  }
+
+  private static func usefulTiles(base: [TileKind], melds: Int, unseen: (TileKind) -> Int) -> Int {
+    let current = shanten(of: base, meldCount: melds)
+    var total = 0
+    for kind in TileSet.normalKinds {
+      if shanten(of: base + [kind], meldCount: melds) < current {
+        total += max(0, unseen(kind))
+      }
+    }
+    return total
+  }
+
+  private static func arrange(
+    _ counts: inout [Int],
+    index: Int,
+    melds: Int,
+    partials: Int,
+    pair: Bool,
+    need: Int,
+    memo: inout [String: Int]
+  ) -> Int {
+    var index = index
+    while index < 34, counts[index] == 0 { index += 1 }
+    let key = "\(index)#\(melds)#\(partials)#\(pair ? 1 : 0)#\(counts.map(String.init).joined(separator: ","))"
+    if let cached = memo[key] { return cached }
+    if index == 34 {
+      let room = max(0, need - melds)
+      let parts = min(partials, room)
+      let value = room * 2 - parts - (pair ? 1 : 0)
+      memo[key] = value
+      return value
+    }
+    var best = 8
+    let tileCount = counts[index]
+    if tileCount >= 3 {
+      counts[index] -= 3
+      best = min(best, arrange(&counts, index: index, melds: melds + 1, partials: partials, pair: pair, need: need, memo: &memo))
+      counts[index] += 3
+    }
+    if index < 27, index % 9 <= 6, counts[index + 1] > 0, counts[index + 2] > 0 {
+      counts[index] -= 1
+      counts[index + 1] -= 1
+      counts[index + 2] -= 1
+      best = min(best, arrange(&counts, index: index, melds: melds + 1, partials: partials, pair: pair, need: need, memo: &memo))
+      counts[index] += 1
+      counts[index + 1] += 1
+      counts[index + 2] += 1
+    }
+    if tileCount >= 2, !pair {
+      counts[index] -= 2
+      best = min(best, arrange(&counts, index: index, melds: melds, partials: partials, pair: true, need: need, memo: &memo))
+      counts[index] += 2
+    }
+    if tileCount >= 2, partials < need {
+      counts[index] -= 2
+      best = min(best, arrange(&counts, index: index, melds: melds, partials: partials + 1, pair: pair, need: need, memo: &memo))
+      counts[index] += 2
+    }
+    if index < 27, index % 9 <= 7, counts[index + 1] > 0, partials < need {
+      counts[index] -= 1
+      counts[index + 1] -= 1
+      best = min(best, arrange(&counts, index: index, melds: melds, partials: partials + 1, pair: pair, need: need, memo: &memo))
+      counts[index] += 1
+      counts[index + 1] += 1
+    }
+    if index < 27, index % 9 <= 6, counts[index + 2] > 0, partials < need {
+      counts[index] -= 1
+      counts[index + 2] -= 1
+      best = min(best, arrange(&counts, index: index, melds: melds, partials: partials + 1, pair: pair, need: need, memo: &memo))
+      counts[index] += 1
+      counts[index + 2] += 1
+    }
+    let saved = counts[index]
+    counts[index] = 0
+    best = min(best, arrange(&counts, index: index + 1, melds: melds, partials: partials, pair: pair, need: need, memo: &memo))
+    counts[index] = saved
+    memo[key] = best
+    return best
   }
 
   private static func fanLine(waits: [PracticeWait], held: [TileKind]) -> String {
@@ -279,6 +516,8 @@ public enum PracticeCoach {
       visibleCount: visible)
     return "危险 \(name(tile)) \(result.level) · \(result.reason)"
   }
+
+  public static func tileLabel(_ tile: TileKind) -> String { name(tile) }
 
   private static func name(_ tile: TileKind) -> String {
     if let suit = tile.suit, let rank = tile.rank {

@@ -326,17 +326,153 @@ struct ProgressTests {
     #expect(crowded.records.count == ProgressLibrary.transcriptLimit)
   }
 
+  @Test func fullMatchRotatesWindsAndRanksTheTotal() {
+    #expect(FullMatch.handCount == 16)
+    #expect(FullMatch.winds == [.east, .south, .west, .north])
+    let winds = (0..<FullMatch.handCount).map(FullMatch.roundWind(handIndex:))
+    #expect(winds.filter { $0 == .east }.count == 4)
+    #expect(winds.filter { $0 == .south }.count == 4)
+    #expect(winds.filter { $0 == .west }.count == 4)
+    #expect(winds.filter { $0 == .north }.count == 4)
+    #expect(FullMatch.roundWind(handIndex: 0) == .east)
+    #expect(FullMatch.roundWind(handIndex: 4) == .south)
+    #expect(FullMatch.roundWind(handIndex: 15) == .north)
+    #expect(FullMatch.handInRound(handIndex: 5) == 2)
+    #expect(FullMatch.isFinalHand(14) == false)
+    #expect(FullMatch.isFinalHand(15))
+    let dealers = (0..<FullMatch.handCount).map {
+      FullMatch.dealer(handIndex: $0, initialDealer: 1)
+    }
+    #expect(dealers.prefix(4).map { $0 } == [1, 2, 3, 0])
+    #expect(dealers[4] == 1)
+    #expect(FullMatch.seatWind(seat: 0, dealer: dealers[4]) == .north)
+    #expect(EastRound.handCount == 4)
+    #expect(EastRound.roundWind == .east)
+    let totals = FullMatch.ranks([12, 12, -4, -20])
+    #expect(totals == [1, 1, 3, 4])
+    #expect(totals.reduce(0, +) != 0)
+    let deltas = [8, -4, -2, -2]
+    #expect(EastRound.accumulate([0, 0, 0, 0], deltas).reduce(0, +) == 0)
+  }
+
+  @Test func scriptedSpecialHandsClearTheirStars() throws {
+    let cases: [(String, CareerPuzzle, Fan)] = [
+      ("4-03", .sevenPairs, .sevenPairs),
+      ("4-04", .honorsKnitted, .lesserHonorsKnitted),
+      ("4-05", .knittedStraight, .knittedStraight),
+    ]
+    for (id, puzzle, fan) in cases {
+      let level = CareerCatalog.level(id: id)!
+      #expect(level.puzzle == puzzle)
+      #expect(level.star1 == star(for: puzzle))
+      var state = CareerDeals.opening(puzzle)
+      try state.apply(.draw(seat: 0))
+      let score = try #require(
+        WinContextBuilder.selfDrawScore(state: state, seat: 0, roundWind: .east, seatWind: .east))
+      #expect(score.isLegalWin)
+      #expect(score.awards.contains { $0.fan == fan })
+      let outcome = HandOutcome(
+        humanWon: true, selfDrawn: true, dealtIn: false, drawn: false,
+        nonFlowerPoints: score.nonFlowerPoints, awards: score.awards.map(\.fan),
+        exposedMelds: 0, kongs: 0, concealedKongs: 0)
+      #expect(CareerGrader.stars(for: level, outcome: outcome) == 3)
+      let ordinary = HandOutcome(
+        humanWon: true, selfDrawn: true, dealtIn: false, drawn: false,
+        nonFlowerPoints: 24, awards: [.selfDraw], exposedMelds: 0, kongs: 0, concealedKongs: 0)
+      #expect(CareerGrader.stars(for: level, outcome: ordinary) == 0)
+    }
+    #expect(CareerCatalog.level(id: "1-01")?.puzzle == nil)
+    #expect(CareerCatalog.level(id: "1-01")?.star1 == .win)
+  }
+
+  @Test func practiceReadsShantenBlocksAndConflicts() {
+    let tenpai: [TileKind] = [
+      .character1, .character2, .character3,
+      .character4, .character5, .character6,
+      .character7, .character8, .character9,
+      .dot2, .dot3, .white, .white,
+    ]
+    #expect(PracticeCoach.shanten(of: tenpai, meldCount: 0) == 0)
+    let studies = PracticeCoach.discardStudies(
+      concealed: tenpai + [.east],
+      melds: [],
+      seatWind: .east,
+      roundWind: .east,
+      unseen: { _ in 2 }
+    )
+    let east = studies.first { $0.tile == .east }
+    #expect(east?.shanten == 0)
+    #expect((east?.usefulTiles ?? 0) > 0)
+    let meld = Meld(type: .pung, tiles: [.white, .white, .white])
+    #expect(PracticeCoach.blockedFanNames(melds: [meld]).contains("七对"))
+    #expect(PracticeCoach.newlyBlocked(before: [], after: [meld]).contains("全不靠"))
+    #expect(PracticeCoach.droppedBelowEight(before: 10, after: 6))
+    #expect(PracticeCoach.conflictingFanNames(tiles: tenpai, melds: []).contains("清一色"))
+    #expect(PracticeCoach.conflictingFanNames(tiles: tenpai, melds: []).contains("断幺"))
+    let off = PracticeSwitches(waits: false, recommendation: false, remaining: true, fans: false, danger: false)
+    let brief = PracticeCoach.brief(
+      concealed: tenpai + [.east], melds: [], discarding: true, selected: .east,
+      discards: [[], [], [], []], exposedMelds: [[], [], [], []], scores: [10, 0, 0, 0],
+      seat: 0, seatWind: .east, roundWind: .east, unseen: { _ in 2 }, switches: off)
+    #expect(brief.waitLine.contains("关闭"))
+    #expect(brief.shantenLine.isEmpty)
+    #expect(PracticeCoach.situationLine(scores: [10, 0, 0, 0], seat: 0).contains("领先"))
+  }
+
+  @Test func replaySeparatesRecordedRulesFromCurrentAnalysis() {
+    let record = sample(
+      mode: .full, winner: 0, discarder: nil, method: .selfDraw, fan: 16, delta: 24)
+    let same = HandReplay.readings(record: record)
+    #expect(same.recorded.version == record.ruleVersion)
+    #expect(same.current.version == MCRRuleBook.version)
+    #expect(same.recorded.title.contains("原规则"))
+    #expect(same.current.title.contains("当前规则"))
+    let old = HandRecord(
+      mode: .full, seed: 1, difficulty: .beginner, steps: [], canReplay: false,
+      winner: 0, discarder: nil, winMethod: .selfDraw, fanPoints: 8, nonFlowerPoints: 8,
+      awardFans: [], deltas: [8, -8, 0, 0], chowCount: 0, pungCount: 0, kongCount: 0,
+      concealedKongCount: 0, humanExposedMelds: 0, ruleVersion: "MCR-old")
+    let changed = HandReplay.readings(record: old)
+    #expect(changed.recorded.version == "MCR-old")
+    #expect(changed.current.detail.contains("MCR-old"))
+    #expect(changed.current.detail.contains(MCRRuleBook.version))
+    let chow = Meld(
+      type: .chow, tiles: [.character1, .character2, .character3], claimedFrom: 3)
+    #expect(PracticeCoach.newlyBlocked(before: [], after: [chow]).contains("七对"))
+    let json = #"{"music":0.2,"effects":0.4,"voice":0.8}"#
+    let audio = try! JSONDecoder().decode(AudioSettings.self, from: Data(json.utf8))
+    #expect(audio.hapticsEnabled)
+    var career = CareerProgress()
+    career.bestStars["2-10"] = 1
+    let items = CosmeticCatalog.items(career: career)
+    #expect(items.first { $0.id == "table-wood" }?.unlocked == true)
+    #expect(items.first { $0.id == "character-liefeng" }?.unlocked == true)
+    #expect(items.first { $0.id == "table-final" }?.unlocked == false)
+  }
+
+  private func star(for puzzle: CareerPuzzle) -> StarCondition {
+    switch puzzle {
+    case .sevenPairs: return .sevenPairs
+    case .honorsKnitted: return .honorsKnitted
+    case .knittedStraight: return .knittedStraight
+    }
+  }
+
   private func reachableClear(_ level: CareerLevel) -> HandOutcome {
     let conditions = [level.star1, level.star2, level.star3]
     let melded = conditions.contains(.anyMeld)
     let kong = conditions.contains(.anyKong) || conditions.contains(.concealedKong)
+    var awards: [Fan] = [.allChows, .allSimples, .oneVoidedSuit, .noHonors, .selfDraw]
+    if conditions.contains(.sevenPairs) { awards.append(.sevenPairs) }
+    if conditions.contains(.honorsKnitted) { awards.append(.lesserHonorsKnitted) }
+    if conditions.contains(.knittedStraight) { awards.append(.knittedStraight) }
     return HandOutcome(
       humanWon: true,
       selfDrawn: true,
       dealtIn: false,
       drawn: false,
       nonFlowerPoints: 24,
-      awards: [.allChows, .allSimples, .oneVoidedSuit, .noHonors, .selfDraw],
+      awards: awards,
       exposedMelds: melded ? 1 : 0,
       kongs: kong ? 1 : 0,
       concealedKongs: conditions.contains(.concealedKong) ? 1 : 0

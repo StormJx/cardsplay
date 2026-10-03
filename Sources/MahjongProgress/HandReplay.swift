@@ -22,6 +22,15 @@ public enum ReplayMark: String, Codable, Sendable {
   case claimed
   case won
   case drawn
+  case fanPath
+  case belowEight
+}
+
+public struct RuleReading: Equatable, Sendable {
+  public let title: String
+  public let version: String
+  public let nonFlowerPoints: Int
+  public let detail: String
 }
 
 public struct ReplayNote: Hashable, Sendable {
@@ -42,7 +51,9 @@ public enum ReplayError: Error, Equatable {
 }
 
 public enum HandReplay {
-  public static func frames(seed: UInt64, steps: [ReplayStep], dealer: Int = 0) throws -> [ReplayFrame] {
+  public static func frames(
+    seed: UInt64, steps: [ReplayStep], dealer: Int = 0, roundWind: Wind = .east
+  ) throws -> [ReplayFrame] {
     var state = GameState(seed: seed, dealer: dealer)
     var frames = [ReplayFrame(index: 0, state: state, step: nil)]
     for step in steps {
@@ -55,7 +66,7 @@ public enum HandReplay {
         }
       case let .declareWin(seat):
         guard let context = WinContextBuilder.selfDraw(
-          state: state, seat: seat, roundWind: EastRound.roundWind,
+          state: state, seat: seat, roundWind: roundWind,
           seatWind: EastRound.seatWind(seat: seat, dealer: dealer)
         ) else {
           throw ReplayError.missingWinContext
@@ -96,6 +107,12 @@ public enum HandReplay {
         claims.contains(where: { $0.type != .win })
       {
         notes.append(ReplayNote(frameIndex: index, mark: .claimed, text: "这里发生了吃、碰或杠。"))
+        if claims.contains(where: { $0.seat == 0 && $0.type != .win }) {
+          notes.append(contentsOf: fanNotes(previous: previous, next: frame.state, index: index, dealer: dealer))
+        }
+      }
+      if case .command(.discard(seat: 0, _)) = step {
+        notes.append(contentsOf: fanNotes(previous: previous, next: frame.state, index: index, dealer: dealer))
       }
       if case .endedWin = frame.state.phase {
         notes.append(ReplayNote(frameIndex: index, mark: .won, text: "和牌。"))
@@ -171,6 +188,43 @@ public enum HandReplay {
     return (next, !stop)
   }
 
+  public static func readings(record: HandRecord) -> (recorded: RuleReading, current: RuleReading) {
+    let recorded = RuleReading(
+      title: "按原规则重放",
+      version: record.ruleVersion,
+      nonFlowerPoints: record.nonFlowerPoints,
+      detail: "按牌谱保存的规则 \(record.ruleVersion) 重放动作，记录的非花番是 \(record.nonFlowerPoints)。"
+    )
+    let same = record.ruleVersion == MCRRuleBook.version
+    let current = RuleReading(
+      title: "按当前规则重分析",
+      version: MCRRuleBook.version,
+      nonFlowerPoints: record.nonFlowerPoints,
+      detail: same
+        ? "当前规则仍是 \(MCRRuleBook.version)，和牌谱一致。向听、有效牌和预估番只用当时看得到的牌重算。"
+        : "牌谱规则是 \(record.ruleVersion)，当前规则是 \(MCRRuleBook.version)。向听、有效牌和预估番按当前规则重算，不用最终牌序倒推。"
+    )
+    return (recorded, current)
+  }
+
+  public static func studyLine(state: GameState, scores: [Int], roundWind: Wind = .east) -> String {
+    guard case .awaitingDiscard(seat: 0) = state.phase else { return "" }
+    let concealed = state.players[0].concealed.map(\.kind)
+    let melds = state.players[0].melds
+    let studies = PracticeCoach.discardStudies(
+      concealed: concealed,
+      melds: melds,
+      seatWind: EastRound.seatWind(seat: 0, dealer: 0),
+      roundWind: roundWind,
+      unseen: { PublicInfo.unseenCount(state: state, kind: $0) }
+    )
+    guard !studies.isEmpty else { return "" }
+    let listed = studies.prefix(4).map { study in
+      "\(PracticeCoach.tileLabel(study.tile)) 向听\(study.shanten) 有效\(study.usefulTiles) 约\(study.estimatedFan)番"
+    }.joined(separator: " · ")
+    return listed + " · " + PracticeCoach.situationLine(scores: scores, seat: 0)
+  }
+
   public static func jumpIndexes(frames: [ReplayFrame], kind: Jump) -> [Int] {
     frames.compactMap { frame in
       switch kind {
@@ -191,6 +245,35 @@ public enum HandReplay {
         return nil
       }
     }
+  }
+
+  private static func fanNotes(
+    previous: GameState, next: GameState, index: Int, dealer: Int
+  ) -> [ReplayNote] {
+    let beforeMelds = previous.players[0].melds
+    let afterMelds = next.players[0].melds
+    var notes: [ReplayNote] = []
+    let blocked = PracticeCoach.newlyBlocked(before: beforeMelds, after: afterMelds)
+    if !blocked.isEmpty {
+      notes.append(
+        ReplayNote(
+          frameIndex: index, mark: .fanPath,
+          text: "鸣牌改了番路，这些番已经打不到：\(blocked.joined(separator: "、"))。"))
+    }
+    let wind = EastRound.seatWind(seat: 0, dealer: dealer)
+    let beforeFan = PracticeCoach.bestListedFan(
+      concealed: previous.players[0].concealed.map(\.kind), melds: beforeMelds,
+      seatWind: wind, roundWind: EastRound.roundWind)
+    let afterFan = PracticeCoach.bestListedFan(
+      concealed: next.players[0].concealed.map(\.kind), melds: afterMelds,
+      seatWind: wind, roundWind: EastRound.roundWind)
+    if PracticeCoach.droppedBelowEight(before: beforeFan, after: afterFan) {
+      notes.append(
+        ReplayNote(
+          frameIndex: index, mark: .belowEight,
+          text: "这一步之前非花番还能到 \(beforeFan)，现在不够 8 番。"))
+    }
+    return notes
   }
 
   private static func skippedWin(
