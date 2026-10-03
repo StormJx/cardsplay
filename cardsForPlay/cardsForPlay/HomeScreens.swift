@@ -158,8 +158,8 @@ struct CareerMenu: View {
             Text("第\(chapter.number)章 \(chapter.title)")
               .font(.headline)
             Text(chapter.theme).font(.caption).foregroundStyle(.secondary)
-            if chapter.number == 1 {
-              ForEach(chapter.levels) { level in
+            ForEach(chapter.levels) { level in
+              if level.playable {
                 Button {
                   model.beginCareer(level)
                 } label: {
@@ -167,12 +167,12 @@ struct CareerMenu: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("career-\(level.id)")
-              }
-            } else {
-              ForEach(chapter.levels) { level in
+              } else {
                 levelRow(level)
                   .opacity(0.55)
               }
+            }
+            if chapter.levels.allSatisfy({ !$0.playable }) {
               Text("这一章只保留关卡和星级数据，还不能开打。")
                 .font(.caption2)
                 .foregroundStyle(.orange)
