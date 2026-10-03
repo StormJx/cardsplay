@@ -139,22 +139,18 @@ public enum CareerGrader {
 public enum CareerCatalog {
   public static let chapters: [CareerChapter] = [
     chapterOne(),
-    lockedChapter(
+    playableChapter(
       number: 2, title: "城市牌社", theme: "牌效、有效牌、常见 8–16 番",
-      difficulty: .normal,
-      titles: ["有效牌", "搭子取舍", "八到十六番", "清一色路线", "碰碰和路线", "先手与速度", "见牌修正", "番路选择", "城市积分", "烈风"]),
-    lockedChapter(
+      rows: chapterTwoRows),
+    playableChapter(
       number: 3, title: "湖畔邀请赛", theme: "已见牌、防守、攻守转换",
-      difficulty: .normal,
-      titles: ["已见牌", "危险度", "安全牌", "攻守转换", "守住领先", "少点炮", "听张判断", "副露取舍", "湖畔积分", "静川"]),
-    lockedChapter(
+      rows: chapterThreeRows),
+    playableChapter(
       number: 4, title: "国标大师赛", theme: "复合番、番种排斥、特殊牌型",
-      difficulty: .expert,
-      titles: ["复合番", "不计关系", "七对", "全不靠", "组合龙", "门前取舍", "高番拆解", "特殊牌型", "大师积分", "墨衡"]),
-    lockedChapter(
+      rows: chapterFourRows),
+    playableChapter(
       number: 5, title: "四风终局", theme: "分数战略、读牌、综合决策",
-      difficulty: .expert,
-      titles: ["分数战略", "读公开牌", "落后追分", "领先少放铳", "圈风门风", "多盘累计", "关键弃张", "终局选择", "四风预赛", "玄策"]),
+      rows: chapterFiveRows),
   ]
 
   public static var levels: [CareerLevel] { chapters.flatMap(\.levels) }
@@ -208,28 +204,83 @@ public enum CareerCatalog {
       number: 1, title: "巷口茶馆", theme: "摸打、吃碰杠、8 番起和、基础番种", levels: levels)
   }
 
-  private static func lockedChapter(
+  private typealias LevelRow = (
+    String, String, AIDifficulty, StarCondition, StarCondition, StarCondition
+  )
+
+  private static func playableChapter(
     number: Int,
     title: String,
     theme: String,
-    difficulty: AIDifficulty,
-    titles: [String]
+    rows: [LevelRow]
   ) -> CareerChapter {
-    let levels = titles.enumerated().map { offset, name in
+    let levels = rows.enumerated().map { offset, row in
       CareerLevel(
         id: String(format: "%d-%02d", number, offset + 1),
         chapter: number,
         index: offset + 1,
-        title: name,
-        briefing: "\(title)的关卡数据。这一章还不能开打。",
-        difficulty: difficulty,
-        playable: false,
+        title: row.0,
+        briefing: row.1,
+        difficulty: row.2,
+        playable: true,
         isBoss: offset == 9,
-        star1: .win,
-        star2: .selfDraw,
-        star3: .minFan16
+        star1: row.3,
+        star2: row.4,
+        star3: row.5
       )
     }
     return CareerChapter(number: number, title: title, theme: theme, levels: levels)
   }
+
+  private static let chapterTwoRows: [LevelRow] = [
+    ("有效牌", "和牌通关。第 2 星要带平和、断幺、缺一门或无字；第 3 星至少 16 番。", .beginner, .win, .basicFan, .minFan16),
+    ("搭子取舍", "和牌通关。不吃不碰再和拿第 2 星，同时带上一个基础番拿第 3 星。", .beginner, .win, .concealedWin, .basicFan),
+    ("八到十六番", "和牌通关。非花番到 16 拿第 2 星，到 24 拿第 3 星。", .beginner, .win, .minFan16, .minFan24),
+    ("清一色路线", "可以往一门花色上靠。和牌通关；吃、碰或明杠一次拿第 2 星，16 番拿第 3 星。", .beginner, .win, .anyMeld, .minFan16),
+    ("碰碰和路线", "和牌通关。先鸣一次牌拿第 2 星，这一盘杠过拿第 3 星。", .beginner, .win, .anyMeld, .anyKong),
+    ("先手与速度", "和牌通关。自摸拿第 2 星，至少 16 番拿第 3 星。", .normal, .win, .selfDraw, .minFan16),
+    ("见牌修正", "看过的牌会改有效张。和牌通关，基础番第 2 星，16 番第 3 星。", .normal, .win, .basicFan, .minFan16),
+    ("番路选择", "选定一条番路再和。16 番第 2 星，24 番第 3 星。", .normal, .win, .minFan16, .minFan24),
+    ("城市积分", "和牌通关。16 番第 2 星，自摸第 3 星。", .normal, .win, .minFan16, .selfDraw),
+    ("烈风", "下家打得很冲。和牌通关，自摸拿第 2 星，16 番拿第 3 星。", .normal, .win, .selfDraw, .minFan16),
+  ]
+
+  private static let chapterThreeRows: [LevelRow] = [
+    ("已见牌", "用已经出现的牌修正听张。和牌通关，基础番第 2 星，16 番第 3 星。", .normal, .win, .basicFan, .minFan16),
+    ("危险度", "不放铳就过关。和牌第 2 星，自摸第 3 星。", .normal, .noDealIn, .win, .selfDraw),
+    ("安全牌", "先保证不点炮。和牌第 2 星，门前和牌第 3 星。", .normal, .noDealIn, .win, .concealedWin),
+    ("攻守转换", "能和就和。和牌通关，自摸第 2 星，16 番第 3 星。", .normal, .win, .selfDraw, .minFan16),
+    ("守住领先", "不点炮即过关。和牌第 2 星，16 番第 3 星。", .normal, .noDealIn, .win, .minFan16),
+    ("少点炮", "这一盘不要放铳。和牌第 2 星，自摸第 3 星。", .normal, .noDealIn, .win, .selfDraw),
+    ("听张判断", "和牌通关。自摸第 2 星，带基础番第 3 星。", .normal, .win, .selfDraw, .basicFan),
+    ("副露取舍", "鸣牌要算进番。和牌通关，吃碰或明杠一次拿第 2 星，16 番第 3 星。", .normal, .win, .anyMeld, .minFan16),
+    ("湖畔积分", "和牌后冲番。16 番第 2 星，24 番第 3 星。", .normal, .win, .minFan16, .minFan24),
+    ("静川", "对家很稳。不点炮过关，和牌第 2 星，16 番第 3 星。", .normal, .noDealIn, .win, .minFan16),
+  ]
+
+  private static let chapterFourRows: [LevelRow] = [
+    ("复合番", "和牌通关。非花番到 16 拿第 2 星，到 24 拿第 3 星。", .normal, .win, .minFan16, .minFan24),
+    ("不计关系", "和牌时留意番种会不会不计。基础番第 2 星，16 番第 3 星。", .normal, .win, .basicFan, .minFan16),
+    ("七对", "七对只能门前做。和牌通关；门前和拿第 2 星，16 番拿第 3 星。", .normal, .win, .concealedWin, .minFan16),
+    ("全不靠", "全不靠也要门前。和牌通关，门前和第 2 星，基础番第 3 星。", .normal, .win, .concealedWin, .basicFan),
+    ("组合龙", "和牌通关。门前和第 2 星，24 番第 3 星。", .normal, .win, .concealedWin, .minFan24),
+    ("门前取舍", "可以全程不鸣牌。和牌通关，门前和第 2 星，16 番第 3 星。", .expert, .win, .concealedWin, .minFan16),
+    ("高番拆解", "和牌后拆开看番。16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
+    ("特殊牌型", "和牌通关。带一个基础番拿第 2 星，24 番拿第 3 星。", .expert, .win, .basicFan, .minFan24),
+    ("大师积分", "和牌通关。16 番第 2 星，自摸第 3 星。", .expert, .win, .minFan16, .selfDraw),
+    ("墨衡", "对家爱做大牌。和牌通关，门前和第 2 星，24 番第 3 星。", .expert, .win, .concealedWin, .minFan24),
+  ]
+
+  private static let chapterFiveRows: [LevelRow] = [
+    ("分数战略", "和牌通关。16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
+    ("读公开牌", "按桌面公开牌决定攻守。和牌通关，基础番第 2 星，16 番第 3 星。", .expert, .win, .basicFan, .minFan16),
+    ("落后追分", "这一盘用番数追。和牌通关，16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
+    ("领先少放铳", "不点炮即过关。和牌第 2 星，自摸第 3 星。", .expert, .noDealIn, .win, .selfDraw),
+    ("圈风门风", "东风圈里圈风、门风都能加番。和牌通关，基础番第 2 星，16 番第 3 星。", .expert, .win, .basicFan, .minFan16),
+    ("多盘累计", "先打好这一盘。和牌通关，16 番第 2 星，自摸第 3 星。", .expert, .win, .minFan16, .selfDraw),
+    ("关键弃张", "先保证不放铳。和牌第 2 星，16 番第 3 星。", .expert, .noDealIn, .win, .minFan16),
+    ("终局选择", "和牌通关。自摸第 2 星，16 番第 3 星。", .expert, .win, .selfDraw, .minFan16),
+    ("四风预赛", "和牌通关。16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
+    ("玄策", "综合型对手。和牌通关，自摸第 2 星，24 番第 3 星。", .expert, .win, .selfDraw, .minFan24),
+  ]
 }

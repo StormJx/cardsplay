@@ -269,10 +269,24 @@ struct ProgressTests {
     #expect(CareerCatalog.chapters.count == 5)
     #expect(CareerCatalog.levels.count == 50)
     let playable = CareerCatalog.levels.filter(\.playable)
-    #expect(playable.count == 10)
-    #expect(playable.allSatisfy { $0.chapter == 1 && $0.difficulty == .beginner })
+    #expect(playable.count == 50)
+    let chapterOne = playable.filter { $0.chapter == 1 }
+    #expect(chapterOne.count == 10)
+    #expect(chapterOne.allSatisfy { $0.difficulty == .beginner })
     #expect(playable.contains { $0.isBoss && $0.title.contains("阿岚") })
-    #expect(CareerCatalog.levels.filter { $0.chapter > 1 }.allSatisfy { !$0.playable })
+    #expect(CareerCatalog.levels.filter { $0.chapter > 1 }.allSatisfy { $0.playable })
+    for number in 2...5 {
+      let levels = CareerCatalog.levels.filter { $0.chapter == number }
+      #expect(levels.count == 10)
+      #expect(levels.filter(\.isBoss).count == 1)
+      for level in levels {
+        #expect(CareerGrader.stars(for: level, outcome: reachableClear(level)) == 3)
+      }
+    }
+    #expect(CareerCatalog.level(id: "2-10")?.title.contains("烈风") == true)
+    #expect(CareerCatalog.level(id: "3-10")?.title.contains("静川") == true)
+    #expect(CareerCatalog.level(id: "4-10")?.title.contains("墨衡") == true)
+    #expect(CareerCatalog.level(id: "5-10")?.title.contains("玄策") == true)
     let level = CareerCatalog.level(id: "1-01")!
     let won = HandOutcome(
       humanWon: true, selfDrawn: true, dealtIn: false, drawn: false, nonFlowerPoints: 16,
@@ -310,6 +324,23 @@ struct ProgressTests {
       crowded.append(sample(mode: .quick, winner: 0, discarder: nil, method: .selfDraw, fan: 8, delta: 1))
     }
     #expect(crowded.records.count == ProgressLibrary.transcriptLimit)
+  }
+
+  private func reachableClear(_ level: CareerLevel) -> HandOutcome {
+    let conditions = [level.star1, level.star2, level.star3]
+    let melded = conditions.contains(.anyMeld)
+    let kong = conditions.contains(.anyKong) || conditions.contains(.concealedKong)
+    return HandOutcome(
+      humanWon: true,
+      selfDrawn: true,
+      dealtIn: false,
+      drawn: false,
+      nonFlowerPoints: 24,
+      awards: [.allChows, .allSimples, .oneVoidedSuit, .noHonors, .selfDraw],
+      exposedMelds: melded ? 1 : 0,
+      kongs: kong ? 1 : 0,
+      concealedKongs: conditions.contains(.concealedKong) ? 1 : 0
+    )
   }
 
   private func sample(
