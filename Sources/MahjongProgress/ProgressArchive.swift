@@ -24,6 +24,9 @@ public struct SavedSession: Codable, Sendable {
   public var lastRecordID: UUID?
   public var roundHandIndex: Int?
   public var roundInitialDealer: Int?
+  public var roundDealer: Int?
+  public var forkDealer: Int?
+  public var forkWind: Int?
 
   public init(
     seed: UInt64,
@@ -45,7 +48,10 @@ public struct SavedSession: Codable, Sendable {
     practiceHints: Bool,
     lastRecordID: UUID?,
     roundHandIndex: Int? = nil,
-    roundInitialDealer: Int? = nil
+    roundInitialDealer: Int? = nil,
+    roundDealer: Int? = nil,
+    forkDealer: Int? = nil,
+    forkWind: Int? = nil
   ) {
     self.seed = seed
     self.game = game
@@ -67,6 +73,9 @@ public struct SavedSession: Codable, Sendable {
     self.lastRecordID = lastRecordID
     self.roundHandIndex = roundHandIndex
     self.roundInitialDealer = roundInitialDealer
+    self.roundDealer = roundDealer
+    self.forkDealer = forkDealer
+    self.forkWind = forkWind
   }
 }
 
@@ -85,6 +94,8 @@ public struct ProgressLibrary: Codable, Sendable {
   public var equippedCharacter: String?
   public var equippedMusic: String?
   public var announceFans: Bool?
+  /// Nil keeps the default: the dealer passes after every hand, including a draw.
+  public var repeatDealer: Bool?
 
   public init(
     session: SavedSession? = nil,
@@ -97,7 +108,8 @@ public struct ProgressLibrary: Codable, Sendable {
     equippedBack: String? = nil,
     equippedCharacter: String? = nil,
     equippedMusic: String? = nil,
-    announceFans: Bool? = nil
+    announceFans: Bool? = nil,
+    repeatDealer: Bool? = nil
   ) {
     self.session = session
     self.records = records
@@ -110,6 +122,7 @@ public struct ProgressLibrary: Codable, Sendable {
     self.equippedCharacter = equippedCharacter
     self.equippedMusic = equippedMusic
     self.announceFans = announceFans
+    self.repeatDealer = repeatDealer
   }
 
   public mutating func append(_ record: HandRecord) {

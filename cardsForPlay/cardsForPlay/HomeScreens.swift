@@ -42,6 +42,13 @@ struct HomeMenu: View {
     if session.mode == .full {
       return handOpen || !FullMatch.isFinalHand(session.roundHandIndex ?? 0)
     }
+    if session.mode == .career,
+      let id = session.careerLevelID,
+      let level = CareerCatalog.level(id: id),
+      level.table.handCount > 1
+    {
+      return handOpen || !level.table.isFinal(session.roundHandIndex ?? 0)
+    }
     return handOpen
   }
 
@@ -224,6 +231,15 @@ struct SettingsPage: View {
           get: { model.library.audio.hapticsEnabled },
           set: { model.updateHaptics($0) }
         ))
+        Text("连庄").font(.headline)
+        Toggle("和牌或流局连庄", isOn: Binding(
+          get: { model.repeatDealer },
+          set: { model.setRepeatDealer($0) }
+        ))
+        .accessibilityIdentifier("settings-repeat-dealer")
+        Text("默认关闭：流局也换庄，不连庄。打开后，庄家和牌或流局时下一盘继续坐庄，别家和牌则交给下家。东风圈和十六盘共用这个开关，盘数不变，没有庄家加分。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
         Text("练习提示").font(.headline)
         practiceToggle("听牌", \.waits)
         practiceToggle("向听和有效牌", \.recommendation)
@@ -559,6 +575,9 @@ struct ReplayPage: View {
   @State private var useCurrentRules = false
   @State private var recordedRule = ""
   @State private var currentRule = ""
+  @State private var forkTile: Tile?
+  @State private var sourceSeed: UInt64 = 0
+  @State private var sourceWind = Wind.east
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -585,6 +604,7 @@ struct ReplayPage: View {
     .padding(12)
     .onAppear(perform: load)
     .onDisappear { playing = false }
+    .onChange(of: index) { _, _ in forkTile = nil }
     .task(id: playing) { await autoplay() }
   }
 
@@ -666,6 +686,46 @@ struct ReplayPage: View {
       }
       .buttonStyle(.bordered)
       .controlSize(.small)
+      if let branch = HandReplay.branch(frames: frames, index: index), !branch.alternatives.isEmpty {
+        forkControls(branch)
+      }
+    }
+  }
+
+  private func forkControls(_ branch: ReplayBranch) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text("改打另一张你的牌，从这里续打一盘。原来的牌谱还在。")
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+      ScrollView(.horizontal) {
+        HStack(spacing: 4) {
+          ForEach(branch.alternatives, id: \.self) { tile in
+            Button(tile.kind.displayName) {
+              forkTile = tile
+            }
+            .buttonStyle(.bordered)
+            .tint(forkTile == tile ? .teal : .gray)
+            .controlSize(.small)
+          }
+        }
+      }
+      Button("改打并续打") {
+        guard let forkTile, branch.alternatives.contains(forkTile) else { return }
+        playing = false
+        model.continueFromReplay(
+          seed: sourceSeed,
+          dealer: dealer,
+          roundWind: sourceWind,
+          difficulty: difficulty,
+          prefix: branch.prefixSteps,
+          state: branch.state,
+          discard: forkTile
+        )
+      }
+      .buttonStyle(.borderedProminent)
+      .controlSize(.small)
+      .disabled(forkTile == nil || branch.alternatives.contains(forkTile!) == false)
+      .accessibilityIdentifier("replay-fork")
     }
   }
 
@@ -681,6 +741,7 @@ struct ReplayPage: View {
 
   private func step(by delta: Int) {
     playing = false
+    forkTile = nil
     index = min(max(0, index + delta), max(0, frames.count - 1))
   }
 
@@ -719,7 +780,9 @@ struct ReplayPage: View {
     }
     do {
       dealer = record.dealerSeat ?? 0
-      roundReplay = record.mode == .round
+      sourceSeed = record.seed
+      sourceWind = record.roundWind
+      roundReplay = record.mode == .round || record.mode == .full
       let built = try HandReplay.frames(seed: record.seed, steps: record.steps, dealer: dealer)
       frames = built
       notes = HandReplay.notes(frames: built, dealer: dealer)

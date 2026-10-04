@@ -75,6 +75,41 @@ public struct HandOutcome: Equatable, Sendable {
   }
 }
 
+public enum CareerTable: Equatable, Sendable {
+  case single(dealer: Int)
+  case eastRound(initialDealer: Int)
+  case fullMatch(initialDealer: Int)
+
+  public var handCount: Int {
+    switch self {
+    case .single: return 1
+    case .eastRound: return EastRound.handCount
+    case .fullMatch: return FullMatch.handCount
+    }
+  }
+
+  public var initialDealer: Int {
+    switch self {
+    case .single(let dealer), .eastRound(let dealer), .fullMatch(let dealer):
+      return ((dealer % 4) + 4) % 4
+    }
+  }
+
+  public var rotates: Bool {
+    if case .single = self { return false }
+    return true
+  }
+
+  public var isEastRound: Bool {
+    if case .eastRound = self { return true }
+    return false
+  }
+
+  public func isFinal(_ handIndex: Int) -> Bool {
+    handIndex >= handCount - 1
+  }
+}
+
 public struct CareerLevel: Identifiable, Sendable {
   public let id: String
   public let chapter: Int
@@ -88,6 +123,7 @@ public struct CareerLevel: Identifiable, Sendable {
   public let star2: StarCondition
   public let star3: StarCondition
   public let puzzle: CareerPuzzle?
+  public let table: CareerTable
 
   public init(
     id: String,
@@ -101,7 +137,8 @@ public struct CareerLevel: Identifiable, Sendable {
     star1: StarCondition,
     star2: StarCondition,
     star3: StarCondition,
-    puzzle: CareerPuzzle? = nil
+    puzzle: CareerPuzzle? = nil,
+    table: CareerTable = .single(dealer: 0)
   ) {
     self.id = id
     self.chapter = chapter
@@ -115,6 +152,7 @@ public struct CareerLevel: Identifiable, Sendable {
     self.star2 = star2
     self.star3 = star3
     self.puzzle = puzzle
+    self.table = table
   }
 
   public var starTitles: [String] { [star1.title, star2.title, star3.title] }
@@ -274,7 +312,8 @@ public enum CareerCatalog {
         star1: row.3,
         star2: row.4,
         star3: row.5,
-        puzzle: Self.puzzle(chapter: number, index: offset + 1)
+        puzzle: Self.puzzle(chapter: number, index: offset + 1),
+        table: Self.table(chapter: number, index: offset + 1)
       )
     }
     return CareerChapter(number: number, title: title, theme: theme, levels: levels)
@@ -320,17 +359,38 @@ public enum CareerCatalog {
   ]
 
   private static let chapterFiveRows: [LevelRow] = [
-    ("分数战略", "和牌通关。16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
-    ("读公开牌", "按桌面公开牌决定攻守。和牌通关，基础番第 2 星，16 番第 3 星。", .expert, .win, .basicFan, .minFan16),
-    ("落后追分", "这一盘用番数追。和牌通关，16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
-    ("领先少放铳", "不点炮即过关。和牌第 2 星，自摸第 3 星。", .expert, .noDealIn, .win, .selfDraw),
-    ("圈风门风", "东风圈里圈风、门风都能加番。和牌通关，基础番第 2 星，16 番第 3 星。", .expert, .win, .basicFan, .minFan16),
-    ("多盘累计", "先打好这一盘。和牌通关，16 番第 2 星，自摸第 3 星。", .expert, .win, .minFan16, .selfDraw),
-    ("关键弃张", "先保证不放铳。和牌第 2 星，16 番第 3 星。", .expert, .noDealIn, .win, .minFan16),
-    ("终局选择", "和牌通关。自摸第 2 星，16 番第 3 星。", .expert, .win, .selfDraw, .minFan16),
-    ("四风预赛", "和牌通关。16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
-    ("玄策", "综合型对手。和牌通关，自摸第 2 星，24 番第 3 星。", .expert, .win, .selfDraw, .minFan24),
+    ("分数战略", "打满东风圈四盘，分数累计。和牌通关，16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
+    ("读公开牌", "按桌面公开牌决定攻守。这一盘你不是东家。和牌通关，基础番第 2 星，16 番第 3 星。", .expert, .win, .basicFan, .minFan16),
+    ("落后追分", "打满东风圈，用后面的盘追分。和牌通关，16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
+    ("领先少放铳", "不点炮即过关。这一盘你不是东家。和牌第 2 星，自摸第 3 星。", .expert, .noDealIn, .win, .selfDraw),
+    ("圈风门风", "打满东风圈。圈风保持东，门风随庄家轮换。和牌通关，基础番第 2 星，16 番第 3 星。", .expert, .win, .basicFan, .minFan16),
+    ("多盘累计", "打满东风圈，四盘分数加在一起。和牌通关，16 番第 2 星，自摸第 3 星。", .expert, .win, .minFan16, .selfDraw),
+    ("关键弃张", "先保证不放铳。这一盘你不是东家。和牌第 2 星，16 番第 3 星。", .expert, .noDealIn, .win, .minFan16),
+    ("终局选择", "打满东风圈再看最后一盘。和牌通关，自摸第 2 星，16 番第 3 星。", .expert, .win, .selfDraw, .minFan16),
+    ("四风预赛", "打完整十六盘，东南西北圈都会轮到。和牌通关，16 番第 2 星，24 番第 3 星。", .expert, .win, .minFan16, .minFan24),
+    ("玄策", "综合型对手，打完整十六盘。和牌通关，自摸第 2 星，24 番第 3 星。", .expert, .win, .selfDraw, .minFan24),
   ]
+
+  private static func table(chapter: Int, index: Int) -> CareerTable {
+    if chapter == 1 { return .single(dealer: 0) }
+    if chapter == 4, (3...5).contains(index) { return .single(dealer: 0) }
+    if chapter == 5 {
+      switch index {
+      case 1: return .eastRound(initialDealer: 1)
+      case 3: return .eastRound(initialDealer: 2)
+      case 5: return .eastRound(initialDealer: 1)
+      case 6: return .eastRound(initialDealer: 3)
+      case 8: return .eastRound(initialDealer: 2)
+      case 9: return .fullMatch(initialDealer: 1)
+      case 10: return .fullMatch(initialDealer: 2)
+      case 2: return .single(dealer: 1)
+      case 4: return .single(dealer: 2)
+      case 7: return .single(dealer: 3)
+      default: return .single(dealer: index % 4)
+      }
+    }
+    return .single(dealer: index % 4)
+  }
 
   private static func puzzle(chapter: Int, index: Int) -> CareerPuzzle? {
     switch (chapter, index) {

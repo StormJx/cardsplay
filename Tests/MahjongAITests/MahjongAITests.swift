@@ -115,6 +115,61 @@ struct MahjongAITests {
     #expect(Set(profiles.map { $0.personality.archetype }).count == 3)
   }
 
+  @Test func kongLeavesThePairAndTheTenpaiTile() {
+    let pairOnly = kongInformation([
+      .character1, .character2, .character3,
+      .character4, .character5, .character6,
+      .character7, .character8, .character9,
+      .dot3,
+      .east, .east, .east, .east,
+    ])
+    #expect(!MahjongAIDecider.shouldDeclareKong(kind: .east, removing: 4, information: pairOnly))
+
+    let spareQuad = kongInformation([
+      .character1, .character2, .character3,
+      .character4, .character5, .character6,
+      .bamboo5, .bamboo5,
+      .dot7, .dot8,
+      .east, .east, .east, .east,
+    ])
+    #expect(MahjongAIDecider.shouldDeclareKong(kind: .east, removing: 4, information: spareQuad))
+
+    let tanki = kongInformation(
+      [
+        .character1, .character2, .character3,
+        .dot4, .dot5, .dot6,
+        .bamboo7, .bamboo8, .bamboo9,
+        .dot9,
+        .white,
+      ],
+      melds: [Meld(type: .pung, tiles: [.red, .red, .red])]
+    )
+    #expect(!MahjongAIDecider.shouldDeclareKong(kind: .white, removing: 1, information: tanki))
+
+    let spare = kongInformation(
+      [
+        .character1, .character2, .character3,
+        .dot4, .dot5, .dot6,
+        .east, .east,
+        .bamboo7, .bamboo8,
+        .white,
+      ],
+      melds: [Meld(type: .pung, tiles: [.red, .red, .red])]
+    )
+    #expect(MahjongAIDecider.shouldDeclareKong(kind: .white, removing: 1, information: spare))
+
+    let hidden = kongInformation([
+      .character1, .character2, .character3,
+      .character4, .character5, .character6,
+      .bamboo5, .bamboo5,
+      .dot7, .dot8,
+      .east, .east, .east, .east,
+    ])
+    #expect(
+      MahjongAIDecider.shouldDeclareKong(kind: .east, removing: 4, information: hidden)
+        == MahjongAIDecider.shouldDeclareKong(kind: .east, removing: 4, information: spareQuad))
+  }
+
   @Test func informationSetSerializationContainsNoHiddenState() throws {
     let information = fixture("123456m234p678s", honors: [.east, .north])
     let data = try JSONEncoder().encode(information)
@@ -159,6 +214,20 @@ struct MahjongAITests {
       #expect(Set(decision.candidates.map(\.tile)).count == decision.candidates.count)
     }
   }
+}
+private func kongInformation(_ tiles: [TileKind], melds: [Meld] = []) -> AIInformationSet {
+  AIInformationSet(
+    seat: 1,
+    ownTiles: tiles,
+    ownMelds: melds,
+    discards: Array(repeating: [], count: 4),
+    publicMelds: Array(repeating: [], count: 4),
+    exposedFlowers: Array(repeating: [], count: 4),
+    wallRemaining: 40,
+    scores: [0, 0, 0, 0],
+    roundWind: .east,
+    actionNumber: 3
+  )
 }
 private func fixture(
   _ notation: String,

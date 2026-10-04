@@ -1,13 +1,34 @@
 import MahjongRules
 
-/// One East-round: four hands, prevailing wind stays East, the dealer moves on after every hand.
+/// One East-round: four hands, prevailing wind stays East.
+/// With repeat-dealer off, the dealer moves on after every hand, including a draw.
 public enum EastRound {
   public static let handCount = 4
   public static let roundWind = Wind.east
 
+  /// How the hand ended, for the next dealer only. Scores are unchanged.
+  public enum Continuation: Equatable, Sendable {
+    case win(Int)
+    case draw
+  }
+
   public static func dealer(handIndex: Int, initialDealer: Int) -> Int {
     let start = ((initialDealer % 4) + 4) % 4
     return (start + max(0, handIndex)) % 4
+  }
+
+  /// Next dealer. `repeats` stays with a winning dealer and, as in common MCR play, also stays after a draw.
+  /// Off, the seat always passes, including after a draw. The hand count does not grow.
+  public static func nextDealer(current: Int, continuation: Continuation, repeats: Bool) -> Int {
+    let seat = ((current % 4) + 4) % 4
+    guard repeats else { return (seat + 1) % 4 }
+    switch continuation {
+    case .draw:
+      return seat
+    case .win(let winner):
+      let winnerSeat = ((winner % 4) + 4) % 4
+      return winnerSeat == seat ? seat : (seat + 1) % 4
+    }
   }
 
   /// Wind of a fixed screen seat while `dealer` is East.
@@ -25,7 +46,7 @@ public enum EastRound {
   }
 }
 
-/// East, South, West, and North: sixteen hands. No repeat-dealer extra hand.
+/// East, South, West, and North: sixteen hands. No extra hand is added when the dealer repeats.
 public enum FullMatch {
   public static let roundCount = 4
   public static let handsPerRound = EastRound.handCount
@@ -46,6 +67,12 @@ public enum FullMatch {
 
   public static func dealer(handIndex: Int, initialDealer: Int) -> Int {
     EastRound.dealer(handIndex: handIndex, initialDealer: initialDealer)
+  }
+
+  public static func nextDealer(
+    current: Int, continuation: EastRound.Continuation, repeats: Bool
+  ) -> Int {
+    EastRound.nextDealer(current: current, continuation: continuation, repeats: repeats)
   }
 
   public static func seatWind(seat: Int, dealer: Int) -> Wind {

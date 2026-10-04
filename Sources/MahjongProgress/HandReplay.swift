@@ -45,6 +45,18 @@ public struct ReplayFrame: Sendable {
   public let step: ReplayStep?
 }
 
+/// A point in a saved hand where the player can discard a different tile and keep playing.
+/// The original steps are not rewritten.
+public struct ReplayBranch: Sendable {
+  public let state: GameState
+  public let prefixSteps: [ReplayStep]
+  public let played: Tile?
+
+  public var alternatives: [Tile] {
+    state.players[0].concealed.filter { $0 != played }
+  }
+}
+
 public enum ReplayError: Error, Equatable {
   case missingWinContext
   case rule(RuleViolation)
@@ -220,9 +232,35 @@ public enum HandReplay {
     )
     guard !studies.isEmpty else { return "" }
     let listed = studies.prefix(4).map { study in
-      "\(PracticeCoach.tileLabel(study.tile)) 向听\(study.shanten) 有效\(study.usefulTiles) 约\(study.estimatedFan)番"
+      let base =
+        "\(PracticeCoach.tileLabel(study.tile)) 向听\(study.shanten) 有效\(study.usefulTiles)"
+      return study.shanten == 0 ? base + " 约\(study.estimatedFan)番" : base
     }.joined(separator: " · ")
     return listed + " · " + PracticeCoach.situationLine(scores: scores, seat: 0)
+  }
+
+  /// The current step, when it is your discard, or the step just after you discarded.
+  public static func branch(frames: [ReplayFrame], index: Int) -> ReplayBranch? {
+    guard frames.indices.contains(index) else { return nil }
+    if case .awaitingDiscard(seat: 0) = frames[index].state.phase {
+      return ReplayBranch(
+        state: frames[index].state,
+        prefixSteps: prefixSteps(frames: frames, through: index),
+        played: nextOwnDiscard(frames: frames, after: index)
+      )
+    }
+    if index > 0,
+      case .command(.discard(let seat, let tile)) = frames[index].step,
+      seat == 0,
+      case .awaitingDiscard(seat: 0) = frames[index - 1].state.phase
+    {
+      return ReplayBranch(
+        state: frames[index - 1].state,
+        prefixSteps: prefixSteps(frames: frames, through: index - 1),
+        played: tile
+      )
+    }
+    return nil
   }
 
   public static func jumpIndexes(frames: [ReplayFrame], kind: Jump) -> [Int] {
@@ -245,6 +283,20 @@ public enum HandReplay {
         return nil
       }
     }
+  }
+
+  private static func prefixSteps(frames: [ReplayFrame], through index: Int) -> [ReplayStep] {
+    guard index > 0 else { return [] }
+    return frames[1...index].compactMap(\.step)
+  }
+
+  private static func nextOwnDiscard(frames: [ReplayFrame], after index: Int) -> Tile? {
+    let next = index + 1
+    guard frames.indices.contains(next),
+      case .command(.discard(let seat, let tile)) = frames[next].step,
+      seat == 0
+    else { return nil }
+    return tile
   }
 
   private static func fanNotes(

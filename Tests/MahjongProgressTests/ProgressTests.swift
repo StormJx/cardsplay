@@ -450,6 +450,131 @@ struct ProgressTests {
     #expect(items.first { $0.id == "table-final" }?.unlocked == false)
   }
 
+  @Test func repeatDealerStaysForAWinOrDrawOnlyWhenEnabled() {
+    var passed = 2
+    var seats = [passed]
+    for _ in 1..<EastRound.handCount {
+      passed = EastRound.nextDealer(current: passed, continuation: .draw, repeats: false)
+      seats.append(passed)
+    }
+    #expect(seats == [2, 3, 0, 1])
+    #expect(seats == (0..<EastRound.handCount).map { EastRound.dealer(handIndex: $0, initialDealer: 2) })
+    #expect(EastRound.nextDealer(current: 1, continuation: .win(1), repeats: false) == 2)
+    #expect(EastRound.nextDealer(current: 1, continuation: .draw, repeats: false) == 2)
+    #expect(EastRound.nextDealer(current: 1, continuation: .win(0), repeats: false) == 2)
+    #expect(EastRound.nextDealer(current: 1, continuation: .win(1), repeats: true) == 1)
+    #expect(EastRound.nextDealer(current: 1, continuation: .draw, repeats: true) == 1)
+    #expect(EastRound.nextDealer(current: 1, continuation: .win(0), repeats: true) == 2)
+    #expect(FullMatch.nextDealer(current: 0, continuation: .draw, repeats: true) == 0)
+    #expect(FullMatch.nextDealer(current: 0, continuation: .win(2), repeats: true) == 1)
+    #expect(EastRound.handCount == 4)
+    #expect(FullMatch.handCount == 16)
+
+    var dealer = 0
+    let endings: [EastRound.Continuation] = [.win(0), .draw, .win(1)]
+    var dealt = [dealer]
+    for ending in endings {
+      dealer = EastRound.nextDealer(current: dealer, continuation: ending, repeats: true)
+      dealt.append(dealer)
+    }
+    #expect(dealt == [0, 0, 0, 1])
+  }
+
+  @Test func practiceHidesFanUntilTenpai() {
+    let scattered: [TileKind] = [
+      .character1, .character9, .dot1, .dot9, .bamboo1, .bamboo9,
+      .east, .south, .west, .north, .red, .green, .white, .character5,
+    ]
+    let early = PracticeCoach.brief(
+      concealed: scattered,
+      melds: [],
+      discarding: true,
+      selected: .east,
+      discards: [[], [], [], []],
+      exposedMelds: [[], [], [], []],
+      scores: [0, 0, 0, 0],
+      seat: 0,
+      seatWind: .east,
+      roundWind: .east,
+      unseen: { _ in 4 }
+    )
+    #expect(early.shantenLine.contains("向听"))
+    #expect(early.shantenLine.contains("有效"))
+    #expect(!early.shantenLine.contains("番"))
+    #expect(!early.shantenLine.contains("约"))
+    #expect(early.fanLine.isEmpty)
+    #expect(early.waitLine.isEmpty)
+    #expect(early.dangerLine.isEmpty)
+    #expect(PracticeCoach.shanten(of: scattered.filter { $0 != .east }, meldCount: 0) > 0)
+
+    let tenpai: [TileKind] = [
+      .character1,
+      .character2, .character3, .character4,
+      .character5, .character6, .character7,
+      .character8, .character9,
+      .dot2, .dot3, .dot4,
+      .bamboo5, .bamboo5,
+    ]
+    let ready = PracticeCoach.brief(
+      concealed: tenpai,
+      melds: [],
+      discarding: true,
+      selected: .character1,
+      discards: [[], [], [], []],
+      exposedMelds: [[], [], [], []],
+      scores: [0, 0, 0, 0],
+      seat: 0,
+      seatWind: .east,
+      roundWind: .east,
+      unseen: { _ in 4 }
+    )
+    #expect(ready.waitLine.contains("听"))
+    #expect(ready.fanLine.contains("番"))
+    #expect(!ready.dangerLine.isEmpty)
+    #expect(ready.shantenLine.contains("约"))
+  }
+
+  @Test func laterCareerLevelsUseRoundsWithoutChangingChapterOne() {
+    let chapterOne = CareerCatalog.levels.filter { $0.chapter == 1 }
+    #expect(chapterOne.allSatisfy { $0.table == .single(dealer: 0) })
+    #expect(chapterOne.map(\.star1) == [
+      .win, .win, .win, .noDealIn, .win, .win, .win, .win, .win, .win,
+    ])
+    #expect(CareerCatalog.level(id: "4-03")?.table == .single(dealer: 0))
+    #expect(CareerCatalog.level(id: "4-04")?.table == .single(dealer: 0))
+    #expect(CareerCatalog.level(id: "4-05")?.table == .single(dealer: 0))
+    #expect(CareerCatalog.level(id: "4-03")?.puzzle == .sevenPairs)
+    #expect(CareerCatalog.level(id: "5-05")?.table == .eastRound(initialDealer: 1))
+    #expect(CareerCatalog.level(id: "5-06")?.table == .eastRound(initialDealer: 3))
+    #expect(CareerCatalog.level(id: "5-09")?.table == .fullMatch(initialDealer: 1))
+    #expect(CareerCatalog.level(id: "5-10")?.table == .fullMatch(initialDealer: 2))
+    let later = CareerCatalog.levels.filter { $0.chapter > 1 }
+    #expect(later.contains { $0.table.rotates })
+    #expect(later.contains {
+      if case .single(let dealer) = $0.table { return dealer != 0 }
+      return false
+    })
+  }
+
+  @Test func replayBranchKeepsTheOriginalDiscard() throws {
+    var live = GameState(seed: 11, dealer: 0)
+    let played = live.players[0].concealed[0]
+    let other = try #require(live.players[0].concealed.first { $0 != played })
+    let steps: [ReplayStep] = [.command(.discard(seat: 0, tile: played))]
+    try live.apply(.discard(seat: 0, tile: played))
+    let frames = try HandReplay.frames(seed: 11, steps: steps, dealer: 0)
+    let branch = try #require(HandReplay.branch(frames: frames, index: 1))
+    #expect(branch.played == played)
+    #expect(branch.alternatives.contains(other))
+    #expect(!branch.alternatives.contains(played))
+    #expect(branch.prefixSteps.isEmpty)
+    var forked = branch.state
+    try forked.apply(.discard(seat: 0, tile: other))
+    let original = try HandReplay.state(seed: 11, steps: steps, dealer: 0)
+    #expect(original.discards.last == played)
+    #expect(forked.discards.last == other)
+  }
+
   private func star(for puzzle: CareerPuzzle) -> StarCondition {
     switch puzzle {
     case .sevenPairs: return .sevenPairs

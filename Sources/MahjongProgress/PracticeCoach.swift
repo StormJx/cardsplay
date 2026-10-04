@@ -90,24 +90,64 @@ public enum PracticeCoach {
     let studies = discarding ? discardStudies(
       concealed: concealed, melds: melds, seatWind: seatWind, roundWind: roundWind, unseen: unseen
     ) : []
+    let tenpai = isTenpai(
+      discarding: discarding, discard: discard, waits: waits, concealed: concealed, meldCount: melds.count)
     let blocked = blockedFanNames(melds: melds)
     let conflicts = conflictingFanNames(tiles: concealed + melds.flatMap(\.tiles), melds: melds)
+    let idle = idleShanten(
+      concealed: concealed, meldCount: melds.count, waits: waits, tenpai: tenpai, unseen: unseen)
     return PracticeBrief(
       waitLine: switches.waits
-        ? waitLine(discard: discard, waits: waits, discarding: discarding, showRemaining: switches.remaining)
+        ? (tenpai
+          ? waitLine(discard: discard, waits: waits, discarding: discarding, showRemaining: switches.remaining)
+          : "")
         : "听 已关闭",
       fanLine: switches.fans
-        ? fanLine(waits: waits, held: held)
+        ? (tenpai ? fanLine(waits: waits, held: held) : "")
         : "番 已关闭",
       dangerLine: switches.danger
-        ? dangerLine(
-          tile: dangerTile, discards: discards, exposedMelds: exposedMelds, scores: scores,
-          seat: seat, unseen: unseen)
+        ? (tenpai
+          ? dangerLine(
+            tile: dangerTile, discards: discards, exposedMelds: exposedMelds, scores: scores,
+            seat: seat, unseen: unseen)
+          : "")
         : "危险 已关闭",
-      shantenLine: switches.recommendation ? shantenLine(studies) : "",
-      blockedLine: switches.fans && !blocked.isEmpty ? "副露后打不到 " + blocked.joined(separator: "、") : "",
-      conflictLine: switches.fans && !conflicts.isEmpty ? "和当前牌冲突 " + conflicts.joined(separator: "、") : ""
+      shantenLine: switches.recommendation ? shantenLine(studies, idle: idle) : "",
+      blockedLine: switches.fans && tenpai && !blocked.isEmpty
+        ? "副露后打不到 " + blocked.joined(separator: "、") : "",
+      conflictLine: switches.fans && tenpai && !conflicts.isEmpty
+        ? "和当前牌冲突 " + conflicts.joined(separator: "、") : ""
     )
+  }
+
+  private static func isTenpai(
+    discarding: Bool,
+    discard: TileKind?,
+    waits: [PracticeWait],
+    concealed: [TileKind],
+    meldCount: Int
+  ) -> Bool {
+    if discarding, let discard {
+      return shanten(of: removed(discard, from: concealed), meldCount: meldCount) == 0
+    }
+    if !discarding {
+      return shanten(of: concealed, meldCount: meldCount) == 0 && !waits.isEmpty
+    }
+    return false
+  }
+
+  private static func idleShanten(
+    concealed: [TileKind],
+    meldCount: Int,
+    waits: [PracticeWait],
+    tenpai: Bool,
+    unseen: (TileKind) -> Int
+  ) -> String {
+    let value = shanten(of: concealed, meldCount: meldCount)
+    let useful = tenpai
+      ? waits.reduce(0) { $0 + max(0, $1.remaining) }
+      : usefulTiles(base: concealed, melds: meldCount, unseen: unseen)
+    return "\(value)向听 有效\(useful)"
   }
 
   public static func discardStudies(
@@ -399,10 +439,12 @@ public enum PracticeCoach {
     return waits.isEmpty ? "未听牌" : "听 \(listed)"
   }
 
-  private static func shantenLine(_ studies: [DiscardStudy]) -> String {
-    guard !studies.isEmpty else { return "向听 轮到你出牌时看每张牌" }
-    let listed = studies.prefix(6).map {
-      "\(name($0.tile)) \($0.shanten)向听 有效\($0.usefulTiles) 约\($0.estimatedFan)番"
+  private static func shantenLine(_ studies: [DiscardStudy], idle: String) -> String {
+    guard !studies.isEmpty else { return idle }
+    let listed = studies.prefix(6).map { study in
+      let base = "\(name(study.tile)) \(study.shanten)向听 有效\(study.usefulTiles)"
+      guard study.shanten == 0 else { return base }
+      return base + " 约\(study.estimatedFan)番"
     }.joined(separator: " · ")
     return "向听 " + listed
   }
