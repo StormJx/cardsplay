@@ -66,6 +66,22 @@ public enum MahjongAIDecider {
     )
   }
 
+  /// Whether to declare a concealed kong (`removing` 4) or an added kong (`removing` 1).
+  /// Pair tiles and tiles that make up the tenpai wait are left in the hand.
+  /// Only `information` is consulted, so opponent concealed tiles cannot affect the result.
+  public static func shouldDeclareKong(
+    kind: TileKind,
+    removing: Int,
+    information: AIInformationSet
+  ) -> Bool {
+    KongPolicy.allows(
+      kind: kind,
+      removing: removing,
+      tiles: information.ownTiles,
+      meldCount: information.ownMelds.count
+    )
+  }
+
   public static func shouldClaim(
     _ claim: AIClaimChoice,
     discardedTile: TileKind,

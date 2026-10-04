@@ -87,6 +87,7 @@ final class PrototypeGame: ObservableObject {
   @Published var highlightedFan: Int?
   @Published private(set) var careerNote: String?
   @Published private(set) var lastRecordID: UUID?
+  @Published private(set) var repeatDealer = false
 
   private var driveTask: Task<Void, Never>?
   private var handSeed: UInt64 = 0
@@ -97,6 +98,9 @@ final class PrototypeGame: ObservableObject {
   private var lastMethod: WinMethod?
   private var roundHandIndex = 0
   private var roundInitialDealer = 0
+  private var roundDealer: Int?
+  private var forkDealer: Int?
+  private var forkWind: Wind?
   var mode = PlayMode.quick
   var careerLevelID: String?
   var practiceHints = false
@@ -113,16 +117,15 @@ final class PrototypeGame: ObservableObject {
     }
     if let session = library.session {
       restore(session)
-      if session.mode == .round || session.mode == .full,
-        result == nil || !Self.matchFinished(session)
-      {
-        message = session.mode == .full ? "可以继续这十六盘" : "可以继续这一圈"
+      if tracksWinds && (result == nil || !isLastScheduledHand) {
+        message = usesFullWinds ? "可以继续这十六盘" : "可以继续这一圈"
       } else {
         message = session.winner == nil && !session.drawn ? "可以继续上次牌局" : "上次牌局已经结束"
       }
     } else {
       game = GameState(seed: 0)
     }
+    repeatDealer = library.repeatDealer ?? false
     route = .home
   }
 
@@ -152,16 +155,46 @@ final class PrototypeGame: ObservableObject {
   var setupNote: String? {
     switch pendingMode {
     case .round:
+      if repeatDealer {
+        return "连续四盘，圈风保持东。庄家和牌或流局时连庄，别家和牌则换下家。没有额外加赛，也没有庄家加分。"
+      }
       return "连续四盘，圈风保持东。第一盘庄家由本圈种子决定，之后每盘交给下家；流局也轮转，没有庄家加分。"
     case .full:
+      if repeatDealer {
+        return "东南西北四圈，共 16 盘。庄家和牌或流局时连庄，别家和牌则换下家，每四盘换圈风。没有额外加赛，也没有庄家加分。"
+      }
       return "东南西北四圈，共 16 盘。每盘结束后庄家交给下家，每四盘换圈风。流局也轮转，没有连庄加赛。"
     default:
       return nil
     }
   }
 
-  var tracksWinds: Bool { mode == .round || mode == .full }
-  var isEastRound: Bool { mode == .round }
+  var tracksWinds: Bool { rotatesDealer }
+  var isEastRound: Bool { mode == .round || careerTable?.isEastRound == true }
+
+  private var careerTable: CareerTable? {
+    guard mode == .career, let careerLevelID, let level = CareerCatalog.level(id: careerLevelID) else {
+      return nil
+    }
+    return level.table
+  }
+
+  private var rotatesDealer: Bool {
+    switch mode {
+    case .round, .full:
+      return true
+    case .career:
+      return careerTable?.rotates == true
+    default:
+      return false
+    }
+  }
+
+  private var usesFullWinds: Bool {
+    if mode == .full { return true }
+    if case .fullMatch = careerTable { return true }
+    return false
+  }
 
   var roundCanContinue: Bool {
     tracksWinds && result != nil && !isLastScheduledHand
@@ -172,16 +205,27 @@ final class PrototypeGame: ObservableObject {
   }
 
   private var isLastScheduledHand: Bool {
-    mode == .full ? FullMatch.isFinalHand(roundHandIndex) : EastRound.isFinalHand(roundHandIndex)
+    if usesFullWinds { return FullMatch.isFinalHand(roundHandIndex) }
+    if mode == .round || careerTable?.isEastRound == true {
+      return EastRound.isFinalHand(roundHandIndex)
+    }
+    return true
   }
 
   var currentRoundWind: Wind {
-    mode == .full ? FullMatch.roundWind(handIndex: roundHandIndex) : .east
+    if let forkWind { return forkWind }
+    if usesFullWinds { return FullMatch.roundWind(handIndex: roundHandIndex) }
+    return .east
   }
 
   var dealerSeat: Int {
-    guard tracksWinds else { return 0 }
-    return FullMatch.dealer(handIndex: roundHandIndex, initialDealer: roundInitialDealer)
+    if let forkDealer { return forkDealer }
+    if rotatesDealer {
+      if let roundDealer { return roundDealer }
+      return FullMatch.dealer(handIndex: roundHandIndex, initialDealer: roundInitialDealer)
+    }
+    if case .single(let dealer) = careerTable { return dealer }
+    return 0
   }
 
   func seatWind(_ seat: Int) -> Wind {
@@ -194,13 +238,13 @@ final class PrototypeGame: ObservableObject {
   }
 
   func playerLabel(_ seat: Int) -> String {
-    guard tracksWinds else { return Self.playerNames[seat] }
+    guard tracksWinds || dealerSeat != 0 || forkDealer != nil else { return Self.playerNames[seat] }
     let base = ["你", "阿岚", "静川", "墨衡"][seat]
     return "\(base)（\(windTag(seat))）"
   }
 
   var yourWindLabel: String {
-    tracksWinds ? "你：\(windTag(0))" : "你：东"
+    tracksWinds || dealerSeat != 0 || forkDealer != nil ? "你：\(windTag(0))" : "你：东"
   }
 
   var matchRankLine: String {
@@ -225,7 +269,15 @@ final class PrototypeGame: ObservableObject {
 
   var tableLabel: String {
     if let careerLevelID, let level = CareerCatalog.level(id: careerLevelID) {
-      return "\(level.chapter)-\(level.index) \(level.title)"
+      switch level.table {
+      case .single:
+        return "\(level.chapter)-\(level.index) \(level.title)"
+      case .eastRound:
+        return "\(level.title) · 东风圈 \(roundHandIndex + 1)/4"
+      case .fullMatch:
+        let wind = ["东", "南", "西", "北"][currentRoundWind.rawValue]
+        return "\(level.title) · \(wind)风圈 \(FullMatch.handInRound(handIndex: roundHandIndex))/4 · \(roundHandIndex + 1)/16"
+      }
     }
     if mode == .round { return "东风圈 \(roundHandIndex + 1)/4" }
     if mode == .full {
@@ -358,6 +410,14 @@ final class PrototypeGame: ObservableObject {
 
   func startNextHand() {
     guard tracksWinds, !isLastScheduledHand else { return }
+    let continuation: EastRound.Continuation
+    if let winner = result?.winner, result?.isDraw != true {
+      continuation = .win(winner)
+    } else {
+      continuation = .draw
+    }
+    roundDealer = EastRound.nextDealer(
+      current: dealerSeat, continuation: continuation, repeats: repeatDealer)
     driveTask?.cancel()
     roundHandIndex += 1
     handSeed = Self.freshSeed()
@@ -379,20 +439,25 @@ final class PrototypeGame: ObservableObject {
 
   func startGame(difficulty: AIDifficulty) {
     driveTask?.cancel()
+    clearFork()
     selectedDifficulty = difficulty
     mode = pendingMode
     if mode != .career { careerLevelID = nil }
     practiceHints = mode == .practice
     handSeed = Self.freshSeed()
-    if tracksWinds {
-      roundHandIndex = 0
-      roundInitialDealer = Int(handSeed % 4)
-      game = GameState(seed: handSeed, dealer: dealerSeat)
+    roundHandIndex = 0
+    if rotatesDealer {
+      if let careerTable {
+        roundInitialDealer = careerTable.initialDealer
+      } else {
+        roundInitialDealer = Int(handSeed % 4)
+      }
+      roundDealer = roundInitialDealer
     } else {
-      roundHandIndex = 0
       roundInitialDealer = 0
-      game = GameState(seed: handSeed)
+      roundDealer = nil
     }
+    game = GameState(seed: handSeed, dealer: dealerSeat)
     steps = []
     canReplay = true
     result = nil
@@ -406,9 +471,11 @@ final class PrototypeGame: ObservableObject {
     sessionActive = true
     aiDecisionLogs = [:]
     cumulativeScores = [0, 0, 0, 0]
-    message = tracksWinds
+    message = rotatesDealer
       ? openingMessage
-      : "\(difficulty.displayName)难度开局，你是东家"
+      : (dealerSeat == 0
+        ? "\(difficulty.displayName)难度开局，你是东家"
+        : "\(difficulty.displayName)难度开局，你是\(windTag(0))")
     TableSound.shared.sync(library.audio, calm: musicIsCalm)
     persist()
     scheduleDrive()
@@ -510,12 +577,19 @@ final class PrototypeGame: ObservableObject {
         await waitForAI()
         if finishSelfDrawIfLegal(seat: seat) { return }
         do {
-          if let kind = game.concealedKongKinds(seat: seat).first {
+          let information = aiInformation(seat: seat)
+          if let kind = game.concealedKongKinds(seat: seat).first(where: { kind in
+            MahjongAIDecider.shouldDeclareKong(kind: kind, removing: 4, information: information)
+          }) {
             try apply(.concealedKong(seat: seat, kind: kind))
             message = "\(playerLabel(seat))暗杠 \(kind.displayName)"
             continue
           }
-          if let index = game.addedKongIndices(seat: seat).first {
+          if let index = game.addedKongIndices(seat: seat).first(where: { index in
+            let kind = game.players[seat].melds[index].kind
+            return MahjongAIDecider.shouldDeclareKong(
+              kind: kind, removing: 1, information: information)
+          }) {
             let kind = game.players[seat].melds[index].kind
             let tile = game.players[seat].concealed.first { $0.kind == kind }!
             try apply(.addedKong(seat: seat, meldIndex: index, tile: tile))
@@ -935,18 +1009,84 @@ final class PrototypeGame: ObservableObject {
 
   private var openingMessage: String {
     let starter = "\(playerLabel(dealerSeat))先出牌"
-    if mode == .full {
+    if usesFullWinds {
       let wind = ["东", "南", "西", "北"][currentRoundWind.rawValue]
       return "\(wind)风圈第 \(FullMatch.handInRound(handIndex: roundHandIndex)) 盘，共 16 盘，\(starter)"
     }
-    if mode == .round {
+    if mode == .round || careerTable?.isEastRound == true {
       return "东风圈第 \(roundHandIndex + 1) 盘，\(starter)"
     }
     return starter
   }
 
+  func setRepeatDealer(_ enabled: Bool) {
+    repeatDealer = enabled
+    var saved = library
+    saved.repeatDealer = enabled
+    library = saved
+    persist()
+  }
+
+  func continueFromReplay(
+    seed: UInt64,
+    dealer: Int,
+    roundWind: Wind,
+    difficulty: AIDifficulty,
+    prefix: [ReplayStep],
+    state: GameState,
+    discard: Tile
+  ) {
+    guard case .awaitingDiscard(seat: 0) = state.phase,
+      state.players[0].concealed.contains(discard)
+    else { return }
+    driveTask?.cancel()
+    clearFork()
+    selectedDifficulty = difficulty
+    mode = .quick
+    pendingMode = .quick
+    careerLevelID = nil
+    practiceHints = false
+    handSeed = seed
+    forkDealer = dealer
+    forkWind = roundWind
+    roundHandIndex = 0
+    roundInitialDealer = 0
+    roundDealer = nil
+    game = state
+    steps = prefix
+    canReplay = true
+    result = nil
+    lastMethod = nil
+    careerNote = nil
+    lastRecordID = nil
+    actions = []
+    selectedTile = nil
+    isPaused = false
+    showGameSetup = false
+    sessionActive = true
+    aiDecisionLogs = [:]
+    cumulativeScores = [0, 0, 0, 0]
+    route = .table
+    message = "从这张改打。原来的牌谱还在。"
+    do {
+      try apply(.discard(seat: 0, tile: discard))
+    } catch {
+      message = "这张牌不能从这里打出"
+      return
+    }
+    TableSound.shared.sync(library.audio, calm: musicIsCalm)
+    scheduleDrive()
+  }
+
+  private func clearFork() {
+    forkDealer = nil
+    forkWind = nil
+  }
+
   private func startPuzzle(_ puzzle: CareerPuzzle, difficulty: AIDifficulty) {
     driveTask?.cancel()
+    clearFork()
+    roundDealer = nil
     selectedDifficulty = difficulty
     mode = .career
     practiceHints = false
@@ -1030,12 +1170,6 @@ final class PrototypeGame: ObservableObject {
     practiceSwitches = switches
   }
 
-  private static func matchFinished(_ session: SavedSession) -> Bool {
-    let index = session.roundHandIndex ?? 0
-    if session.mode == .full { return FullMatch.isFinalHand(index) }
-    return EastRound.isFinalHand(index)
-  }
-
   private func waitForAI() async {
     let nanoseconds = UInt64(max(0.02, aiDelay) * 1_000_000_000)
     try? await Task.sleep(nanoseconds: nanoseconds)
@@ -1067,7 +1201,10 @@ final class PrototypeGame: ObservableObject {
       practiceHints: practiceHints,
       lastRecordID: lastRecordID,
       roundHandIndex: tracksWinds ? roundHandIndex : nil,
-      roundInitialDealer: tracksWinds ? roundInitialDealer : nil
+      roundInitialDealer: tracksWinds ? roundInitialDealer : nil,
+      roundDealer: tracksWinds ? roundDealer : nil,
+      forkDealer: forkDealer,
+      forkWind: forkWind?.rawValue
     )
   }
 
@@ -1094,6 +1231,9 @@ final class PrototypeGame: ObservableObject {
     pendingMode = session.mode
     roundHandIndex = session.roundHandIndex ?? 0
     roundInitialDealer = session.roundInitialDealer ?? 0
+    roundDealer = session.roundDealer
+    forkDealer = session.forkDealer
+    forkWind = session.forkWind.flatMap(Wind.init(rawValue:))
     careerLevelID = session.careerLevelID
     practiceHints = session.practiceHints
     lastRecordID = session.lastRecordID

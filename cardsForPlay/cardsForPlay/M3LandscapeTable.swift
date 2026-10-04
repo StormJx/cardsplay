@@ -252,12 +252,12 @@ struct M3LandscapeTable: View {
   private func practiceHints(compact: Bool) -> some View {
     let brief = model.practiceBrief
     return VStack(alignment: .leading, spacing: 1) {
-      Text(brief?.waitLine ?? "听 轮到你时再看")
       if let line = brief?.shantenLine, !line.isEmpty { Text(line) }
-      Text(brief?.fanLine ?? "番 轮到你时再看")
+      if let line = brief?.waitLine, !line.isEmpty { Text(line) }
+      if let line = brief?.fanLine, !line.isEmpty { Text(line) }
       if let line = brief?.blockedLine, !line.isEmpty { Text(line) }
       if let line = brief?.conflictLine, !line.isEmpty { Text(line) }
-      Text(brief?.dangerLine ?? "危险 点一张牌查看")
+      if let line = brief?.dangerLine, !line.isEmpty { Text(line) }
     }
     .font(.system(size: compact ? 9 : 10, weight: .medium))
     .foregroundStyle(.cyan)
