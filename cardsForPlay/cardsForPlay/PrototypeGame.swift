@@ -25,6 +25,7 @@ enum AppRoute: Equatable {
   case replay(UUID)
   case help
   case appearance
+  case dice
 }
 private struct PrototypeSnapshot: Codable {
   let game: GameState
@@ -101,6 +102,7 @@ final class PrototypeGame: ObservableObject {
   private var roundDealer: Int?
   private var forkDealer: Int?
   private var forkWind: Wind?
+  private var fortune = FortuneTrack()
   var mode = PlayMode.quick
   var careerLevelID: String?
   var practiceHints = false
@@ -126,6 +128,7 @@ final class PrototypeGame: ObservableObject {
       game = GameState(seed: 0)
     }
     repeatDealer = library.repeatDealer ?? false
+    fortune = library.fortune ?? FortuneTrack()
     route = .home
   }
 
@@ -433,6 +436,7 @@ final class PrototypeGame: ObservableObject {
     aiDecisionLogs = [:]
     careerNote = nil
     message = openingMessage
+    applyOpeningFortune()
     persist()
     scheduleDrive()
   }
@@ -476,6 +480,11 @@ final class PrototypeGame: ObservableObject {
       : (dealerSeat == 0
         ? "\(difficulty.displayName)难度开局，你是东家"
         : "\(difficulty.displayName)难度开局，你是\(windTag(0))")
+    if mode == .practice {
+      finishFortuneGame()
+    } else {
+      beginFortuneGame()
+    }
     TableSound.shared.sync(library.audio, calm: musicIsCalm)
     persist()
     scheduleDrive()
@@ -900,6 +909,7 @@ final class PrototypeGame: ObservableObject {
       spoken = "和，\(fan)"
     }
     TableSound.shared.speak(spoken, settings: library.audio)
+    closeFortuneIfMatchOver()
     archiveFinished(
       winner: winner, discarder: discarder, score: score, method: method, deltas: deltas,
       drawn: false)
@@ -912,6 +922,7 @@ final class PrototypeGame: ObservableObject {
     result = RoundResult(winner: nil, discarder: nil, score: nil, deltas: deltas)
     actions = []
     message = "牌墙摸完，本局流局"
+    closeFortuneIfMatchOver()
     archiveFinished(
       winner: nil, discarder: nil, score: nil, method: nil, deltas: deltas, drawn: true)
     persist()
@@ -979,6 +990,11 @@ final class PrototypeGame: ObservableObject {
 
   private func apply(_ command: GameCommand) throws {
     try game.apply(command)
+    if case .draw(let seat) = command, seat == 0 {
+      offerDrawFortune()
+    } else if case .concealedKong(let seat, _) = command, seat == 0 {
+      offerDrawFortune()
+    }
     steps.append(.command(command))
     if case .discard = command {
       TableSound.shared.tap(library.audio)
@@ -1017,6 +1033,82 @@ final class PrototypeGame: ObservableObject {
       return "东风圈第 \(roundHandIndex + 1) 盘，\(starter)"
     }
     return starter
+  }
+
+  var fortuneStatusLine: String? { fortune.remainingLine }
+  var diceCount: Int { fortune.diceCount }
+  var diceFaces: [Int] { fortune.faces }
+  var diceLuckLine: String { fortune.luckLine }
+  var diceTotal: Int { fortune.faces.reduce(0, +) }
+
+  func changeDiceCount(by delta: Int) {
+    var track = fortune
+    let next = track.diceCount + delta
+    track.diceCount = min(DailyDice.maximumCount, max(DailyDice.minimumCount, next))
+    storeFortune(track)
+  }
+
+  func rollDice() {
+    var track = fortune
+    var rng = SystemRandomNumberGenerator()
+    track.roll(faces: DailyDice.faces(count: track.diceCount, random: &rng))
+    storeFortune(track)
+  }
+
+  private func beginFortuneGame() {
+    var track = fortune
+    _ = track.beginGame()
+    storeFortune(track)
+    applyOpeningFortune()
+  }
+
+  private func finishFortuneGame() {
+    var track = fortune
+    track.finishGame()
+    storeFortune(track)
+  }
+
+  private func closeFortuneIfMatchOver() {
+    guard !tracksWinds || isLastScheduledHand else { return }
+    finishFortuneGame()
+  }
+
+  private func applyOpeningFortune() {
+    guard fortune.openingHelp, mode != .practice else { return }
+    let hand = game.players[0].concealed
+    let upcoming = game.wall.upcomingTiles(limit: DailyDice.openingLookahead)
+    guard let choice = FortuneAid.openingPairExchange(
+      hand: hand.map(\.kind),
+      upcoming: upcoming.map(\.kind)
+    ),
+      let handTile = hand.first(where: { $0.kind == choice.remove }),
+      game.exchangeOpening(seat: 0, handTile: handTile, upcomingOffset: choice.offset)
+    else { return }
+    canReplay = false
+  }
+
+  private func offerDrawFortune() {
+    guard fortune.drawHelp, mode != .practice else { return }
+    guard let drawn = game.events.last.flatMap({ event -> Tile? in
+      if case .drew(let seat, let tile) = event, seat == 0 { return tile }
+      return nil
+    }) else { return }
+    let upcoming = game.wall.upcomingTiles(limit: DailyDice.drawLookahead)
+    guard let offset = FortuneAid.improvingDrawOffset(
+      concealed: game.players[0].concealed.map(\.kind),
+      meldCount: game.players[0].melds.count,
+      drawn: drawn.kind,
+      upcoming: upcoming.map(\.kind)
+    ), game.replaceLatestDraw(seat: 0, upcomingOffset: offset) else { return }
+    canReplay = false
+  }
+
+  private func storeFortune(_ track: FortuneTrack) {
+    fortune = track
+    var saved = library
+    saved.fortune = track
+    library = saved
+    persist()
   }
 
   func setRepeatDealer(_ enabled: Bool) {
@@ -1109,6 +1201,7 @@ final class PrototypeGame: ObservableObject {
     aiDecisionLogs = [:]
     cumulativeScores = [0, 0, 0, 0]
     message = "固定残局。摸进的牌可以和，点「和」。"
+    finishFortuneGame()
     TableSound.shared.sync(library.audio, calm: musicIsCalm)
     persist()
     scheduleDrive()

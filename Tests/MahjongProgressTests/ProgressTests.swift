@@ -556,6 +556,130 @@ struct ProgressTests {
     })
   }
 
+  @Test func diceGradesPointBands() {
+    for face in 1...4 {
+      #expect(DailyDice.grade(faces: [face]) == .plain)
+    }
+    #expect(DailyDice.grade(faces: [5]) == .small)
+    #expect(DailyDice.grade(faces: [6]) == .great)
+
+    #expect(DailyDice.grade(faces: [1, 1]) == .plain)
+    #expect(DailyDice.grade(faces: [2, 6]) == .plain)
+    #expect(DailyDice.grade(faces: [3, 6]) == .small)
+    #expect(DailyDice.grade(faces: [4, 6]) == .small)
+    #expect(DailyDice.grade(faces: [5, 6]) == .great)
+    #expect(DailyDice.grade(faces: [6, 6]) == .great)
+
+    #expect(DailyDice.grade(faces: [1, 1, 1]) == .plain)
+    #expect(DailyDice.grade(faces: [2, 4, 5]) == .plain)
+    #expect(DailyDice.grade(faces: [2, 4, 6]) == .small)
+    #expect(DailyDice.grade(faces: [4, 5, 5]) == .small)
+    #expect(DailyDice.grade(faces: [4, 5, 6]) == .great)
+    #expect(DailyDice.grade(faces: [6, 6, 6]) == .great)
+    #expect(DailyDice.grade(faces: []) == .plain)
+    #expect(DailyDice.grade(faces: [6, 6, 6, 6]) == .plain)
+  }
+
+  @Test func fortuneLastsThreeGamesAndANewRollReplacesIt() {
+    var track = FortuneTrack()
+    track.roll(faces: [6])
+    #expect(track.tier == .great)
+    #expect(track.queuedGames == 3)
+    #expect(!track.activeGame)
+    #expect(track.gamesRemaining == 3)
+    #expect(track.remainingLine == "运势还剩 3 局")
+
+    let first = track.beginGame()
+    #expect(first)
+    #expect(track.queuedGames == 2)
+    #expect(track.gamesRemaining == 3)
+    #expect(track.drawHelp)
+    #expect(track.openingHelp)
+    track.finishGame()
+    #expect(track.gamesRemaining == 2)
+
+    let second = track.beginGame()
+    track.finishGame()
+    let third = track.beginGame()
+    track.finishGame()
+    #expect(second && third)
+    #expect(track.gamesRemaining == 0)
+    #expect(track.remainingLine == nil)
+    let fourth = track.beginGame()
+    #expect(fourth == false)
+    #expect(!track.drawHelp)
+    #expect(!track.openingHelp)
+
+    track.roll(faces: [6])
+    let usedOnce = track.beginGame()
+    #expect(usedOnce)
+    track.roll(faces: [5])
+    #expect(track.tier == .small)
+    #expect(!track.activeGame)
+    #expect(track.queuedGames == 3)
+    #expect(track.gamesRemaining == 3)
+    let refreshed = track.beginGame()
+    #expect(refreshed)
+    #expect(track.drawHelp)
+    #expect(!track.openingHelp)
+
+    track.roll(faces: [1, 1])
+    #expect(track.tier == .plain)
+    #expect(track.gamesRemaining == 0)
+    let plainStart = track.beginGame()
+    #expect(plainStart == false)
+
+    track.roll(faces: [6, 6])
+    var started = 0
+    while track.beginGame() {
+      started += 1
+      track.finishGame()
+    }
+    let extra = track.beginGame()
+    #expect(started == 3)
+    #expect(extra == false)
+  }
+
+  @Test func fortuneExchangesOnlyTilesAlreadyInHandOrWall() throws {
+    let characters = (1...9).compactMap { TileKind(suit: .characters, rank: $0) }
+    let paired = characters + [.east, .east, .south, .west, .white]
+    #expect(FortuneAid.openingPairExchange(hand: paired, upcoming: [.south]) == nil)
+
+    let singles = characters + [.east, .south, .west, .north, .white]
+    #expect(FortuneAid.openingPairExchange(hand: singles, upcoming: [.red, .green]) == nil)
+    let opening = try #require(
+      FortuneAid.openingPairExchange(hand: singles, upcoming: [.spring, .red, .east]))
+    #expect(opening.offset == 2)
+    #expect(opening.remove != .east)
+    #expect(singles.contains(opening.remove))
+
+    let drawn = TileKind(suit: .bamboo, rank: 9)!
+    let concealed = characters + [
+      TileKind(suit: .dots, rank: 1)!,
+      TileKind(suit: .dots, rank: 2)!,
+      .east, .east, drawn,
+    ]
+    let upcoming: [TileKind] = [.spring, .white, TileKind(suit: .dots, rank: 3)!, .red]
+    let current = PracticeCoach.shanten(of: concealed, meldCount: 0)
+    let offset = try #require(
+      FortuneAid.improvingDrawOffset(
+        concealed: concealed, meldCount: 0, drawn: drawn, upcoming: upcoming))
+    #expect(offset == 2)
+    var without = concealed
+    without.removeAll { $0 == drawn }
+    #expect(PracticeCoach.shanten(of: without + [upcoming[offset]], meldCount: 0) < current)
+
+    var game = GameState(seed: 5, dealer: 0)
+    let wallBefore = game.wall.tiles
+    let handTile = game.players[0].concealed[0]
+    let fromWall = try #require(game.wall.upcomingTiles(limit: 1).first)
+    let exchanged = game.exchangeOpening(seat: 0, handTile: handTile, upcomingOffset: 0)
+    #expect(exchanged)
+    #expect(Set(game.wall.tiles) == Set(wallBefore))
+    #expect(game.players[0].concealed.contains(fromWall))
+    #expect(game.wall.tiles.contains(handTile))
+  }
+
   @Test func replayBranchKeepsTheOriginalDiscard() throws {
     var live = GameState(seed: 11, dealer: 0)
     let played = live.players[0].concealed[0]

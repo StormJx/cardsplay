@@ -19,6 +19,11 @@ struct HomeMenu: View {
         menu("东风圈", "home-round") { model.beginSetup(mode: .round) }
         menu("生涯", "home-career") { model.route = .career }
         menu("更多", "home-more") { model.route = .more }
+        Button("今日骰子") { model.route = .dice }
+          .font(.subheadline)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .accessibilityIdentifier("home-dice")
       }
       .padding(16)
       .frame(maxWidth: 360)
@@ -62,6 +67,54 @@ struct HomeMenu: View {
     .tint(.teal)
     .accessibilityIdentifier(identifier)
     .accessibilityLabel(title)
+  }
+}
+
+struct DicePage: View {
+  @ObservedObject var model: PrototypeGame
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 14) {
+        pageHeader("今日骰子", model: model)
+        Text("默认 1 颗，最多 3 颗。点一次「掷」，一起掷出。")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        HStack {
+          Button("少一颗") { model.changeDiceCount(by: -1) }
+            .disabled(model.diceCount <= 1)
+            .accessibilityIdentifier("dice-less")
+          Text("\(model.diceCount) 颗")
+            .frame(maxWidth: .infinity)
+          Button("加一颗") { model.changeDiceCount(by: 1) }
+            .disabled(model.diceCount >= 3)
+            .accessibilityIdentifier("dice-more")
+        }
+        .buttonStyle(.bordered)
+        Button("掷") { model.rollDice() }
+          .buttonStyle(.borderedProminent)
+          .accessibilityIdentifier("dice-roll")
+        if model.diceFaces.isEmpty {
+          Text("还没掷。")
+        } else {
+          Text("点数 \(model.diceFaces.map(String.init).joined(separator: "、"))")
+            .font(.title3.monospacedDigit())
+          Text("合计 \(model.diceTotal)")
+            .font(.headline.monospacedDigit())
+        }
+        Text(model.diceLuckLine)
+        if let remaining = model.fortuneStatusLine {
+          Text(remaining)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .padding(16)
+      .frame(maxWidth: 360)
+      .frame(maxWidth: .infinity)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color(red: 0.04, green: 0.16, blue: 0.12))
   }
 }
 

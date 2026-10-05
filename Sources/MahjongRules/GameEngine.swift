@@ -340,6 +340,34 @@ public struct GameState: Codable, Sendable {
     }
   }
 
+  /// Exchanges the tile just drawn with a later wall tile. Nothing is created.
+  public mutating func replaceLatestDraw(seat: Int, upcomingOffset: Int) -> Bool {
+    guard case .awaitingDiscard(let turn) = phase, turn == seat else { return false }
+    guard let lastIndex = events.indices.last,
+      case .drew(let drawSeat, let drawn) = events[lastIndex],
+      drawSeat == seat,
+      let handIndex = players[seat].concealed.lastIndex(of: drawn),
+      let replacement = wall.swapDrawn(drawn, withUpcomingOffset: upcomingOffset)
+    else { return false }
+    players[seat].concealed[handIndex] = replacement
+    events[lastIndex] = .drew(seat: seat, tile: replacement)
+    return true
+  }
+
+  /// Exchanges one opening tile with the wall. Only before anyone has played.
+  public mutating func exchangeOpening(seat: Int, handTile: Tile, upcomingOffset: Int) -> Bool {
+    let stillOpening = events.allSatisfy { event in
+      if case .exposedFlower = event { return true }
+      return false
+    }
+    guard stillOpening,
+      let handIndex = players[seat].concealed.firstIndex(of: handTile),
+      let replacement = wall.swapDrawn(handTile, withUpcomingOffset: upcomingOffset)
+    else { return false }
+    players[seat].concealed[handIndex] = replacement
+    return true
+  }
+
   @discardableResult
   private mutating func remove(kind: TileKind, count: Int, from seat: Int) -> [Tile] {
     var removed: [Tile] = []

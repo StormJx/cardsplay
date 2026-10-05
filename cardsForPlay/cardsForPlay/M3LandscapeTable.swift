@@ -60,6 +60,11 @@ struct M3LandscapeTable: View {
         .foregroundStyle(.yellow)
       Text(model.selectedDifficulty.displayName)
         .foregroundStyle(.cyan)
+      if let fortune = model.fortuneStatusLine {
+        Text(fortune)
+          .foregroundStyle(.yellow)
+          .accessibilityIdentifier("fortune-remaining")
+      }
       Spacer(minLength: 5)
       ForEach(0..<4, id: \.self) { seat in
         Text("\(scoreName(seat)) \(signedScore(seat))")
