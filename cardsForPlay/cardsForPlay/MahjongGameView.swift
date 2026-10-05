@@ -39,6 +39,8 @@ struct MahjongGameView: View {
         RulesHelpPage(model: model)
       case .appearance:
         AppearancePage(model: model)
+      case .dice:
+        DicePage(model: model)
       }
     }
     .preferredColorScheme(.dark)

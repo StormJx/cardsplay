@@ -73,6 +73,24 @@ public struct Wall: Codable, Equatable, Sendable {
     return (tile, flowers)
   }
 
+  public func upcomingTiles(limit: Int) -> [Tile] {
+    guard limit > 0, !isEmpty else { return [] }
+    let last = min(backIndex, frontIndex + limit - 1)
+    guard last >= frontIndex else { return [] }
+    return Array(tiles[frontIndex...last])
+  }
+
+  /// Puts an already-drawn tile back into the wall and returns the upcoming tile that replaces it.
+  public mutating func swapDrawn(_ tile: Tile, withUpcomingOffset offset: Int) -> Tile? {
+    guard let drawnIndex = tiles.firstIndex(of: tile) else { return nil }
+    let index = frontIndex + offset
+    guard drawnIndex < frontIndex || drawnIndex > backIndex else { return nil }
+    guard (frontIndex...backIndex).contains(index) else { return nil }
+    guard !tiles[index].kind.isFlower else { return nil }
+    tiles.swapAt(drawnIndex, index)
+    return tiles[drawnIndex]
+  }
+
   public var drawnTiles: [Tile] {
     guard !tiles.isEmpty else { return [] }
     let front = frontIndex > 0 ? Array(tiles[0..<frontIndex]) : []

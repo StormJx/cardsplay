@@ -96,6 +96,7 @@ public struct ProgressLibrary: Codable, Sendable {
   public var announceFans: Bool?
   /// Nil keeps the default: the dealer passes after every hand, including a draw.
   public var repeatDealer: Bool?
+  public var fortune: FortuneTrack?
 
   public init(
     session: SavedSession? = nil,
@@ -109,7 +110,8 @@ public struct ProgressLibrary: Codable, Sendable {
     equippedCharacter: String? = nil,
     equippedMusic: String? = nil,
     announceFans: Bool? = nil,
-    repeatDealer: Bool? = nil
+    repeatDealer: Bool? = nil,
+    fortune: FortuneTrack? = nil
   ) {
     self.session = session
     self.records = records
@@ -123,6 +125,7 @@ public struct ProgressLibrary: Codable, Sendable {
     self.equippedMusic = equippedMusic
     self.announceFans = announceFans
     self.repeatDealer = repeatDealer
+    self.fortune = fortune
   }
 
   public mutating func append(_ record: HandRecord) {
