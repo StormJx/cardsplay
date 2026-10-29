@@ -301,6 +301,19 @@ struct ProgressTests {
       humanWon: false, selfDrawn: false, dealtIn: false, drawn: true, nonFlowerPoints: 0,
       awards: [], exposedMelds: 0, kongs: 0, concealedKongs: 0)
     #expect(CareerGrader.stars(for: defense, outcome: escaped) == 1)
+    let lines = CareerGrader.starLines(for: level, outcome: won)
+    #expect(lines.map(\.met) == [true, true, true])
+    #expect(CareerGrader.missingSummary(for: level, outcome: won) == "三星都达成")
+    let partial = HandOutcome(
+      humanWon: true, selfDrawn: false, dealtIn: false, drawn: false, nonFlowerPoints: 8,
+      awards: [], exposedMelds: 0, kongs: 0, concealedKongs: 0)
+    #expect(CareerGrader.starLines(for: level, outcome: partial).map(\.met) == [true, false, false])
+    let missing = CareerGrader.missingSummary(for: level, outcome: partial)
+    #expect(missing.contains("第2星：自摸"))
+    #expect(missing.contains("第3星：至少 16 番"))
+    #expect(CareerCatalog.nextPlayable(after: "1-01")?.id == "1-02")
+    #expect(CareerCatalog.nextPlayable(after: "1-10")?.id == "2-01")
+    #expect(CareerCatalog.nextPlayable(after: "5-10") == nil)
   }
 
   @Test func corruptSnapshotFallsBackAndTranscriptsAreCapped() throws {

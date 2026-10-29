@@ -175,11 +175,39 @@ public struct CareerProgress: Codable, Sendable {
   }
 }
 
+public struct CareerStarLine: Equatable, Sendable {
+  public let index: Int
+  public let title: String
+  public let met: Bool
+
+  public init(index: Int, title: String, met: Bool) {
+    self.index = index
+    self.title = title
+    self.met = met
+  }
+}
+
 public enum CareerGrader {
   public static func stars(for level: CareerLevel, outcome: HandOutcome) -> Int {
     let met = [level.star1, level.star2, level.star3].map { conditionMet($0, outcome) }
     guard met[0] else { return 0 }
     return met.filter { $0 }.count
+  }
+
+  public static func starLines(for level: CareerLevel, outcome: HandOutcome) -> [CareerStarLine] {
+    [level.star1, level.star2, level.star3].enumerated().map { offset, condition in
+      CareerStarLine(
+        index: offset + 1,
+        title: condition.title,
+        met: conditionMet(condition, outcome)
+      )
+    }
+  }
+
+  public static func missingSummary(for level: CareerLevel, outcome: HandOutcome) -> String {
+    let missing = starLines(for: level, outcome: outcome).filter { !$0.met }
+    if missing.isEmpty { return "三星都达成" }
+    return "缺的是" + missing.map { "第\($0.index)星：\($0.title)" }.joined(separator: "、")
   }
 
   public static func hint(for level: CareerLevel, outcome: HandOutcome) -> String {
@@ -242,6 +270,11 @@ public enum CareerCatalog {
 
   public static func level(id: String) -> CareerLevel? {
     levels.first { $0.id == id }
+  }
+
+  public static func nextPlayable(after id: String) -> CareerLevel? {
+    guard let start = levels.firstIndex(where: { $0.id == id }) else { return nil }
+    return levels.dropFirst(start + 1).first(where: \.playable)
   }
 
   public static func chapterCleared(_ number: Int, stars: [String: Int], minimum: Int) -> Bool {

@@ -6,6 +6,7 @@ import SwiftUI
 
 struct M3LandscapeTable: View {
   @ObservedObject var model: PrototypeGame
+  @State private var expandedFan: Fan?
 
   private let boardScene: GameScene = {
     let scene = GameScene(size: CGSize(width: 1_200, height: 700))
@@ -38,13 +39,30 @@ struct M3LandscapeTable: View {
         .padding(.vertical, compact ? 3 : 5)
 
         if model.isPaused { pauseOverlay }
-        if let result = model.result { resultOverlay(result) }
+        if let result = model.result { resultOverlay(result, compact: compact) }
         if model.showGameSetup { gameSetupOverlay }
       }
     }
     .sheet(isPresented: $model.showSettings) {
       settingsView
     }
+    .alert("这手可以和，仍要打出？", isPresented: $model.discardConfirm) {
+      Button("仍要打出") { model.confirmPendingDiscard() }
+      Button("和牌") { model.takeWinInstead() }
+      Button("取消", role: .cancel) { model.cancelPendingDiscard() }
+    } message: {
+      Text(discardConfirmMessage)
+    }
+    .onChange(of: model.lastRecordID) { _, _ in
+      expandedFan = nil
+    }
+  }
+
+  private var discardConfirmMessage: String {
+    if let tile = model.pendingDiscard {
+      return "选中的是\(tile.kind.displayName)。确认后才打出。"
+    }
+    return "确认后才打出。"
   }
 
   private var statusBar: some View {
@@ -152,6 +170,24 @@ struct M3LandscapeTable: View {
         .background(.black.opacity(0.52), in: Capsule())
         .frame(maxWidth: max(190, width - riverInset * 2 - 15))
         .position(x: width / 2, y: height / 2)
+
+        if !model.careerCornerLines.isEmpty {
+          VStack(alignment: .leading, spacing: 1) {
+            Text("本关三星")
+              .font(.system(size: 8, weight: .bold))
+            ForEach(model.careerCornerLines, id: \.self) { line in
+              Text(line)
+            }
+          }
+          .font(.system(size: 8))
+          .foregroundStyle(.yellow)
+          .padding(5)
+          .background(.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 6))
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+          .padding(4)
+          .allowsHitTesting(false)
+          .accessibilityIdentifier("career-star-corner")
+        }
       }
     }
     .frame(maxHeight: .infinity)
@@ -227,26 +263,9 @@ struct M3LandscapeTable: View {
         }
       }
 
-      if case .awaitingDiscard(seat: 0) = model.game.phase {
-        Button("打出") {
-          model.discardSelected()
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .disabled(model.selectedTile == nil)
-        .accessibilityIdentifier("discard-button")
-        .accessibilityLabel(discardAccessibilityLabel)
-      }
       Spacer(minLength: 0)
     }
     .frame(height: 34)
-  }
-
-  private var discardAccessibilityLabel: String {
-    if let tile = model.selectedTile {
-      return "打出\(tile.kind.displayName)"
-    }
-    return "打出选中的牌"
   }
 
   private var characterCaption: String {
@@ -306,38 +325,60 @@ struct M3LandscapeTable: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
       } else {
         GeometryReader { hand in
-          let count = max(14, model.game.players[0].concealed.count)
+          let layout = model.playerHand
+          let freshGap: CGFloat = layout.fresh == nil ? 0 : 14
+          let tileCount = layout.sorted.count + (layout.fresh == nil ? 0 : 1)
+          let count = max(14, tileCount)
           let spacing: CGFloat = 2
+          let reserved = layout.fresh == nil ? 0 : freshGap
           let tileWidth = min(
             compact ? 38 : 43,
-            (hand.size.width - CGFloat(count - 1) * spacing) / CGFloat(count)
+            (hand.size.width - reserved - CGFloat(max(0, count - 1)) * spacing) / CGFloat(count)
           )
           HStack(spacing: spacing) {
-            ForEach(model.sortedPlayerTiles, id: \.self) { tile in
-              Button {
-                model.select(tile)
-              } label: {
-                GraphicTileFace(
-                  kind: tile.kind,
-                  selected: model.selectedTile == tile,
-                  miniature: false
-                )
-                .frame(width: tileWidth, height: compact ? 54 : 61)
-              }
-              .buttonStyle(.plain)
-              .accessibilityIdentifier("tile-\(tile.kind.rawValue)-\(tile.copy)")
-              .accessibilityLabel(tile.kind.displayName)
-              .accessibilityAddTraits(model.selectedTile == tile ? .isSelected : [])
+            ForEach(layout.sorted, id: \.self) { tile in
+              handTile(tile, width: tileWidth, compact: compact, fresh: false)
+            }
+            if let fresh = layout.fresh {
+              handTile(fresh, width: tileWidth, compact: compact, fresh: true)
+                .padding(.leading, freshGap)
             }
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
       }
     }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier(playerDiscarding ? "your-discard-turn" : "your-hand")
     .padding(.horizontal, 6)
     .padding(.vertical, 3)
     .frame(height: compact ? 64 : 72)
     .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+  }
+
+  private var playerDiscarding: Bool {
+    if case .awaitingDiscard(seat: 0) = model.game.phase {
+      return model.result == nil
+    }
+    return false
+  }
+
+  private func handTile(_ tile: Tile, width: CGFloat, compact: Bool, fresh: Bool) -> some View {
+    Button {
+      model.select(tile)
+    } label: {
+      GraphicTileFace(
+        kind: tile.kind,
+        selected: model.selectedTile == tile,
+        miniature: false
+      )
+      .frame(width: width, height: compact ? 54 : 61)
+    }
+    .buttonStyle(.plain)
+    .accessibilityIdentifier("tile-\(tile.kind.rawValue)-\(tile.copy)")
+    .accessibilityLabel(fresh ? "刚摸到\(tile.kind.displayName)" : tile.kind.displayName)
+    .accessibilityHint(model.selectedTile == tile ? "再点一次打出" : "点一下选中")
+    .accessibilityAddTraits(model.selectedTile == tile ? .isSelected : [])
   }
 
   private var gameSetupOverlay: some View {
@@ -439,75 +480,130 @@ struct M3LandscapeTable: View {
     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
   }
 
-  private func resultOverlay(_ result: RoundResult) -> some View {
+  private func resultOverlay(_ result: RoundResult, compact: Bool) -> some View {
     VStack(spacing: 8) {
-      if model.tracksWinds {
-        Text(model.tableLabel)
-          .font(.caption.bold())
-          .foregroundStyle(.secondary)
-      }
-      if result.isDraw {
-        Text("流局").font(.title.bold())
-        Text("牌墙已摸完，本局无人和牌")
-      } else if let winner = result.winner, let score = result.score {
-        Text("\(model.playerLabel(winner))和牌")
-          .font(.title2.bold())
-        Text(result.discarder == nil ? "自摸" : "\(model.playerLabel(result.discarder!))放铳")
-          .foregroundStyle(.secondary)
-        Text(score.awards.map { "\($0.fan.name) \($0.points)番" }.joined(separator: " · "))
-          .font(.caption)
-          .multilineTextAlignment(.center)
-        Text("合计 \(score.totalPoints) 番")
-          .font(.headline)
-          .foregroundStyle(.yellow)
-        ScrollView(.horizontal) {
-          HStack(spacing: 6) {
-            ForEach(Array(score.awards.enumerated()), id: \.offset) { _, award in
-              Button("\(award.fan.name) \(award.points)") {
-                model.highlightedFan = award.fan.rawValue
-                model.route = .guides
+      ScrollView {
+        VStack(spacing: 8) {
+          if model.tracksWinds {
+            Text(model.tableLabel)
+              .font(.caption.bold())
+              .foregroundStyle(.secondary)
+          }
+          if result.isDraw {
+            Text("流局").font(.title.bold())
+            Text("牌墙已摸完，本局无人和牌")
+          } else if let winner = result.winner, let score = result.score {
+            Text("\(model.playerLabel(winner))和牌")
+              .font(.title2.bold())
+            Text(result.discarder == nil ? "自摸" : "\(model.playerLabel(result.discarder!))放铳")
+              .foregroundStyle(.secondary)
+            Text(score.awards.map { "\($0.fan.name) \($0.points)番" }.joined(separator: " · "))
+              .font(.caption)
+              .multilineTextAlignment(.center)
+            Text("合计 \(score.totalPoints) 番")
+              .font(.headline)
+              .foregroundStyle(.yellow)
+            ScrollView(.horizontal) {
+              HStack(spacing: 6) {
+                ForEach(Array(score.awards.enumerated()), id: \.offset) { _, award in
+                  Button("\(award.fan.name) \(award.points)") {
+                    expandedFan = expandedFan == award.fan ? nil : award.fan
+                  }
+                  .buttonStyle(.bordered)
+                  .controlSize(.small)
+                  .tint(expandedFan == award.fan ? .yellow : .accentColor)
+                  .accessibilityIdentifier("result-fan-\(award.fan.rawValue)")
+                }
               }
-              .buttonStyle(.bordered)
-              .controlSize(.small)
+            }
+            .frame(height: 32)
+            if let fan = expandedFan {
+              fanNote(FanGuideBook.guide(fan))
+            }
+            Text(deltaLine(result.deltas))
+              .font(.caption2.monospacedDigit())
+          }
+          careerStarReport
+          if model.tracksWinds {
+            Text(totalsCaption)
+              .font(.caption.bold())
+            Text(model.cumulativeLine)
+              .font(.caption2.monospacedDigit())
+              .multilineTextAlignment(.center)
+            if model.roundComplete {
+              Text(model.matchRankLine)
+                .font(.caption2)
+                .multilineTextAlignment(.center)
             }
           }
         }
-        .frame(height: 32)
-        Text(deltaLine(result.deltas))
-          .font(.caption2.monospacedDigit())
-        if let careerNote = model.careerNote {
-          Text(careerNote).font(.caption.bold()).foregroundStyle(.yellow)
-        }
+        .frame(maxWidth: .infinity)
       }
-      if model.tracksWinds {
-        Text(totalsCaption)
-          .font(.caption.bold())
-        Text(model.cumulativeLine)
-          .font(.caption2.monospacedDigit())
-          .multilineTextAlignment(.center)
-        if model.roundComplete {
-          Text(model.matchRankLine)
-            .font(.caption2)
-            .multilineTextAlignment(.center)
-        }
-      }
-      HStack {
-        Button("返回主页") { model.returnHome() }
-          .buttonStyle(.bordered)
-        Button(model.primaryResultButton) { model.advanceResult() }
-          .buttonStyle(.borderedProminent)
-          .accessibilityIdentifier("result-primary")
-        if model.lastRecordCanReplay, let id = model.lastRecordID {
-          Button("复盘") { model.openReplay(id) }
-            .buttonStyle(.bordered)
-        }
-      }
+      .frame(maxHeight: compact ? 210 : 280)
+      resultButtons
     }
     .frame(maxWidth: 520)
     .padding(22)
     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
     .padding()
     .accessibilityIdentifier("result-overlay")
+  }
+
+  @ViewBuilder
+  private var careerStarReport: some View {
+    if !model.settlementStarLines.isEmpty {
+      VStack(alignment: .leading, spacing: 2) {
+        ForEach(model.settlementStarLines, id: \.index) { line in
+          Text("第\(line.index)星 \(line.title) · \(line.met ? "达成" : "未达成")")
+            .foregroundStyle(line.met ? Color.yellow : Color.secondary)
+        }
+        if let missing = model.settlementMissing {
+          Text(missing)
+            .font(.caption.bold())
+            .foregroundStyle(.yellow)
+        }
+      }
+      .font(.caption2)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .accessibilityIdentifier("career-stars")
+    }
+  }
+
+  private func fanNote(_ guide: FanGuide) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text("\(guide.points)番 \(guide.name)")
+        .font(.caption.bold())
+      Text(guide.summary)
+      Text("限制：\(guide.limit)")
+      Text("示例：\(guide.example)")
+      Text("不计：\(guide.excludedNames)")
+      Text(guide.pitfall)
+        .foregroundStyle(.orange)
+    }
+    .font(.caption2)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(8)
+    .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
+    .accessibilityIdentifier("fan-note")
+  }
+
+  private var resultButtons: some View {
+    HStack {
+      Button("返回主页") { model.returnHome() }
+        .buttonStyle(.bordered)
+      if model.offersNextLevel {
+        Button("重试本关") { model.retryCareerLevel() }
+          .buttonStyle(.bordered)
+          .accessibilityIdentifier("result-retry")
+      }
+      Button(model.primaryResultButton) { model.advanceResult() }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("result-primary")
+      if model.lastRecordCanReplay, let id = model.lastRecordID {
+        Button("复盘") { model.openReplay(id) }
+          .buttonStyle(.bordered)
+      }
+    }
   }
 
   private var settingsView: some View {
@@ -970,11 +1066,40 @@ private struct BambooStalk: View {
   }
 }
 extension PrototypeGame {
-  fileprivate var sortedPlayerTiles: [Tile] {
-    game.players[0].concealed.sorted {
-      if $0.kind != $1.kind { return $0.kind < $1.kind }
-      return $0.copy < $1.copy
+  fileprivate struct PlayerHand {
+    var sorted: [Tile]
+    var fresh: Tile?
+  }
+
+  fileprivate var playerHand: PlayerHand {
+    let concealed = game.players[0].concealed
+    let fresh = freshDraw(in: concealed)
+    let held = concealed.filter { fresh == nil || $0 != fresh }
+    return PlayerHand(sorted: held.sorted(by: tileOrder), fresh: fresh)
+  }
+
+  private func tileOrder(_ lhs: Tile, _ rhs: Tile) -> Bool {
+    if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
+    return lhs.copy < rhs.copy
+  }
+
+  /// The tile just drawn stays out of suit order until a discard or a meld.
+  private func freshDraw(in concealed: [Tile]) -> Tile? {
+    guard case .awaitingDiscard(seat: 0) = game.phase else { return nil }
+    for event in game.events.reversed() {
+      switch event {
+      case let .drew(seat, tile) where seat == 0:
+        return concealed.contains(tile) ? tile : nil
+      case let .claimed(seat, _, _) where seat == 0:
+        return nil
+      case let .discarded(seat, _) where seat == 0:
+        return nil
+      default:
+        continue
+      }
     }
+    guard concealed.count >= 14 else { return nil }
+    return concealed.last
   }
 
   fileprivate var discardRivers: [[Tile]] {
@@ -1029,7 +1154,7 @@ extension PrototypeGame {
 
   fileprivate var operationHint: String {
     switch game.phase {
-    case .awaitingDiscard(seat: 0): return "点选手牌后打出"
+    case .awaitingDiscard(seat: 0): return "点一下选中，再点一次打出"
     case .awaitingResponses: return "等待响应"
     case .awaitingRobKong: return "等待抢杠"
     default: return "等待对手操作"

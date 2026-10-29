@@ -38,7 +38,6 @@ final class cardsForPlayUITests: XCTestCase {
     start.tap()
 
     let result = app.otherElements["result-overlay"]
-    let discard = app.buttons["discard-button"]
 
     for _ in 0..<260 where !result.exists {
       let win = app.buttons["action-win"]
@@ -53,18 +52,20 @@ final class cardsForPlayUITests: XCTestCase {
         continue
       }
 
-      if discard.exists {
-        let tiles = app.buttons.matching(
+      let turn = app.descendants(matching: .any)["your-discard-turn"]
+      if turn.exists {
+        let tiles = turn.buttons.matching(
           NSPredicate(format: "identifier BEGINSWITH 'tile-'")
         )
         let firstTile = tiles.firstMatch
-        XCTAssertTrue(firstTile.waitForExistence(timeout: 2))
-        firstTile.tap()
-        if discard.isEnabled { discard.tap() }
+        if firstTile.waitForExistence(timeout: 2) {
+          firstTile.tap()
+          firstTile.tap()
+        }
         continue
       }
 
-      _ = discard.waitForExistence(timeout: 1)
+      _ = turn.waitForExistence(timeout: 1)
     }
 
     XCTAssertTrue(result.waitForExistence(timeout: 5), "一盘应当以和牌或流局结束")
