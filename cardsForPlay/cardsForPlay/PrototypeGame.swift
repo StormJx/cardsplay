@@ -76,6 +76,8 @@ final class PrototypeGame: ObservableObject {
   @Published private(set) var result: RoundResult?
   @Published private(set) var actions: [HumanAction] = []
   @Published var selectedTile: Tile?
+  @Published var discardConfirm = false
+  @Published private(set) var pendingDiscard: Tile?
   @Published var isPaused = false
   @Published var showSettings = false
   @Published var aiDelay = 0.22
@@ -264,10 +266,36 @@ final class PrototypeGame: ObservableObject {
 
   var primaryResultButton: String {
     if roundCanContinue { return "下一盘" }
+    if offersNextLevel { return "下一关" }
     if careerLevelID != nil { return "重试本关" }
     if mode == .full { return "再来十六盘" }
     if mode == .round { return "再来一圈" }
     return "再来一局"
+  }
+
+  var offersNextLevel: Bool {
+    guard result != nil, !roundCanContinue, let careerLevelID else { return false }
+    let passed = (library.career.bestStars[careerLevelID] ?? 0) >= 1
+    return passed && CareerCatalog.nextPlayable(after: careerLevelID) != nil
+  }
+
+  var careerCornerLines: [String] {
+    guard mode == .career, !showGameSetup, let careerLevelID,
+      let level = CareerCatalog.level(id: careerLevelID)
+    else { return [] }
+    return [level.star1, level.star2, level.star3].enumerated().map { offset, condition in
+      "第\(offset + 1)星 \(condition.title)"
+    }
+  }
+
+  var settlementStarLines: [CareerStarLine] {
+    guard let level = settledCareerLevel, let outcome = settledCareerOutcome() else { return [] }
+    return CareerGrader.starLines(for: level, outcome: outcome)
+  }
+
+  var settlementMissing: String? {
+    guard let level = settledCareerLevel, let outcome = settledCareerOutcome() else { return nil }
+    return CareerGrader.missingSummary(for: level, outcome: outcome)
   }
 
   var tableLabel: String {
@@ -406,9 +434,19 @@ final class PrototypeGame: ObservableObject {
   func advanceResult() {
     if roundCanContinue {
       startNextHand()
-    } else {
-      newGame()
+      return
     }
+    if offersNextLevel, let careerLevelID,
+      let next = CareerCatalog.nextPlayable(after: careerLevelID)
+    {
+      beginCareer(next)
+      return
+    }
+    newGame()
+  }
+
+  func retryCareerLevel() {
+    newGame()
   }
 
   func startNextHand() {
@@ -430,7 +468,7 @@ final class PrototypeGame: ObservableObject {
     result = nil
     lastMethod = nil
     actions = []
-    selectedTile = nil
+    clearHandSelection()
     isPaused = false
     showGameSetup = false
     aiDecisionLogs = [:]
@@ -469,7 +507,7 @@ final class PrototypeGame: ObservableObject {
     careerNote = nil
     lastRecordID = nil
     actions = []
-    selectedTile = nil
+    clearHandSelection()
     isPaused = false
     showGameSetup = false
     sessionActive = true
@@ -510,21 +548,66 @@ final class PrototypeGame: ObservableObject {
   }
 
   func select(_ tile: Tile) {
+    guard !isPaused, result == nil, !discardConfirm else { return }
     guard case .awaitingDiscard(seat: 0) = game.phase else { return }
-    selectedTile = selectedTile == tile ? nil : tile
+    guard game.players[0].concealed.contains(tile) else { return }
+    if selectedTile == tile {
+      if actions.contains(.win) {
+        pendingDiscard = tile
+        discardConfirm = true
+      } else {
+        discard(tile)
+      }
+    } else {
+      selectedTile = tile
+    }
   }
 
   func discardSelected() {
-    guard case .awaitingDiscard(seat: 0) = game.phase, let selectedTile else { return }
+    guard let selectedTile else { return }
+    if actions.contains(.win), case .awaitingDiscard(seat: 0) = game.phase {
+      pendingDiscard = selectedTile
+      discardConfirm = true
+      return
+    }
+    discard(selectedTile)
+  }
+
+  func confirmPendingDiscard() {
+    guard let tile = pendingDiscard else { return }
+    pendingDiscard = nil
+    discardConfirm = false
+    discard(tile)
+  }
+
+  func takeWinInstead() {
+    pendingDiscard = nil
+    discardConfirm = false
+    perform(.win)
+  }
+
+  func cancelPendingDiscard() {
+    pendingDiscard = nil
+    discardConfirm = false
+  }
+
+  private func discard(_ tile: Tile) {
+    guard case .awaitingDiscard(seat: 0) = game.phase else { return }
     do {
-      try apply(.discard(seat: 0, tile: selectedTile))
-      self.selectedTile = nil
+      try apply(.discard(seat: 0, tile: tile))
+      clearHandSelection()
       actions = []
-      message = "你打出 \(selectedTile.kind.displayName)"
+      message = "你打出 \(tile.kind.displayName)"
       scheduleDrive()
     } catch {
       message = "不能打出这张牌：\(error)"
     }
+  }
+
+  private func clearHandSelection() {
+    selectedTile = nil
+    pendingDiscard = nil
+    discardConfirm = false
   }
 
   func perform(_ action: HumanAction) {
@@ -535,6 +618,7 @@ final class PrototypeGame: ObservableObject {
         try performHumanWin()
       case let .concealedKong(kind):
         try apply(.concealedKong(seat: 0, kind: kind))
+        clearHandSelection()
         message = "你声明暗杠 \(kind.displayName)"
         actions = []
         scheduleDrive()
@@ -543,6 +627,7 @@ final class PrototypeGame: ObservableObject {
           return
         }
         try apply(.addedKong(seat: 0, meldIndex: index, tile: tile))
+        clearHandSelection()
         message = "你声明补杠 \(kind.displayName)"
         actions = []
         scheduleDrive()
@@ -665,7 +750,13 @@ final class PrototypeGame: ObservableObject {
     actions += game.addedKongIndices(seat: 0).map { index in
       .addedKong(index: index, kind: game.players[0].melds[index].kind)
     }
-    message = actions.isEmpty ? "请选择一张牌打出" : "可以和/杠，或直接选择牌打出"
+    if actions.contains(.win) {
+      message = "这手可以和。再点已选中的牌会先确认"
+    } else if actions.isEmpty {
+      message = "点一下选中，再点一次打出"
+    } else {
+      message = "可以杠，或点一下选中再点一次打出"
+    }
   }
 
   private func performHumanWin() throws {
@@ -719,6 +810,7 @@ final class PrototypeGame: ObservableObject {
         return
       }
       actions = []
+      clearHandSelection()
       try resolveClaims(
         claims, discarder: discarder, tile: tile, method: .discard)
       scheduleDrive()
@@ -967,20 +1059,11 @@ final class PrototypeGame: ObservableObject {
     )
     library.append(record)
     lastRecordID = record.id
-    if mode == .career, let careerLevelID, let level = CareerCatalog.level(id: careerLevelID) {
-      let outcome = HandOutcome(
-        humanWon: winner == 0,
-        selfDrawn: winner == 0 && (method == .selfDraw || method == .kongReplacement),
-        dealtIn: discarder == 0,
-        drawn: drawn,
-        nonFlowerPoints: score?.nonFlowerPoints ?? 0,
-        awards: score?.awards.map(\.fan) ?? [],
-        exposedMelds: exposed,
-        kongs: counts.kongs,
-        concealedKongs: counts.concealedKongs
-      )
+    if mode == .career, let careerLevelID, let level = CareerCatalog.level(id: careerLevelID),
+      let outcome = settledCareerOutcome()
+    {
       let earned = CareerGrader.stars(for: level, outcome: outcome)
-      careerNote = CareerGrader.hint(for: level, outcome: outcome)
+      careerNote = CareerGrader.missingSummary(for: level, outcome: outcome)
       library.career.bestStars[careerLevelID] = max(
         library.career.bestStars[careerLevelID] ?? 0, earned)
     } else {
@@ -1152,7 +1235,7 @@ final class PrototypeGame: ObservableObject {
     careerNote = nil
     lastRecordID = nil
     actions = []
-    selectedTile = nil
+    clearHandSelection()
     isPaused = false
     showGameSetup = false
     sessionActive = true
@@ -1193,7 +1276,7 @@ final class PrototypeGame: ObservableObject {
     careerNote = nil
     lastRecordID = nil
     actions = []
-    selectedTile = nil
+    clearHandSelection()
     isPaused = false
     showGameSetup = false
     sessionActive = true
@@ -1334,7 +1417,29 @@ final class PrototypeGame: ObservableObject {
     sessionActive = true
     showGameSetup = false
     actions = []
-    selectedTile = nil
+    clearHandSelection()
+  }
+
+  private var settledCareerLevel: CareerLevel? {
+    guard mode == .career, result != nil, let careerLevelID else { return nil }
+    return CareerCatalog.level(id: careerLevelID)
+  }
+
+  private func settledCareerOutcome() -> HandOutcome? {
+    guard let result else { return nil }
+    let counts = HandFacts.counts(events: game.events)
+    let exposed = game.players[0].melds.filter(\.isExposed).count
+    return HandOutcome(
+      humanWon: result.winner == 0,
+      selfDrawn: result.winner == 0 && (lastMethod == .selfDraw || lastMethod == .kongReplacement),
+      dealtIn: result.discarder == 0,
+      drawn: result.isDraw,
+      nonFlowerPoints: result.score?.nonFlowerPoints ?? 0,
+      awards: result.score?.awards.map(\.fan) ?? [],
+      exposedMelds: exposed,
+      kongs: counts.kongs,
+      concealedKongs: counts.concealedKongs
+    )
   }
 
   private static func loadLegacy() -> PrototypeSnapshot? {
