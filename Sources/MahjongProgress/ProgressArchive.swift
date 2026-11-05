@@ -21,6 +21,8 @@ public struct SavedSession: Codable, Sendable {
   public var mode: PlayMode
   public var careerLevelID: String?
   public var practiceHints: Bool
+  public var lessonActive: Bool?
+  public var puzzleMissed: Bool?
   public var lastRecordID: UUID?
   public var roundHandIndex: Int?
   public var roundInitialDealer: Int?
@@ -46,6 +48,8 @@ public struct SavedSession: Codable, Sendable {
     mode: PlayMode,
     careerLevelID: String?,
     practiceHints: Bool,
+    lessonActive: Bool? = nil,
+    puzzleMissed: Bool? = nil,
     lastRecordID: UUID?,
     roundHandIndex: Int? = nil,
     roundInitialDealer: Int? = nil,
@@ -70,6 +74,8 @@ public struct SavedSession: Codable, Sendable {
     self.mode = mode
     self.careerLevelID = careerLevelID
     self.practiceHints = practiceHints
+    self.lessonActive = lessonActive
+    self.puzzleMissed = puzzleMissed
     self.lastRecordID = lastRecordID
     self.roundHandIndex = roundHandIndex
     self.roundInitialDealer = roundInitialDealer

@@ -252,4 +252,49 @@ struct ScoringTests {
     #expect(awardSet(result).contains(.chickenHand))
     #expect(result?.nonFlowerPoints == 8)
   }
+
+  @Test func greaterAndLesserThanFiveNeedEveryTileSuited() {
+    let high = context(
+      "678m789m678p999s", honors: [.east, .east], winning: .east, method: .discard)
+    let highScore = MCRScorer.score(high)
+    #expect(!awardSet(highScore).contains(.upperFour))
+    #expect(highScore?.isLegalWin == false)
+
+    let low = context(
+      "123m234m123p111s", honors: [.east, .east], winning: .east, method: .discard)
+    let lowScore = MCRScorer.score(low)
+    #expect(!awardSet(lowScore).contains(.lowerFour))
+    #expect(lowScore?.isLegalWin == false)
+  }
+
+  @Test func identicalEdgeAndClosedWaitsStillScore() {
+    let tiles = "112233m456p789s"
+    let edge = MCRScorer.score(
+      context(tiles, honors: [.white, .white], winning: .character3, method: .discard))
+    #expect(awardSet(edge).contains(.edgeWait))
+    let closed = MCRScorer.score(
+      context(tiles, honors: [.white, .white], winning: .character2, method: .discard))
+    #expect(awardSet(closed).contains(.closedWait))
+  }
+
+  @Test func singleWaitRequiresThatTileToBeTheOnlyWait() {
+    let paired = context(
+      "44555m123p456s789m", winning: .character4, method: .discard)
+    #expect(MCRScorer.score(paired) != nil)
+    #expect(!awardSet(MCRScorer.score(paired)).contains(.singleWait))
+  }
+
+  @Test func settlementNamesThePairAndFourMelds() {
+    let score = MCRScorer.score(
+      context(
+        "123456m789p55s",
+        melds: [pung(.red)],
+        winning: .bamboo5,
+        method: .discard
+      ))
+    let sentence = score?.structure.settlementSentence ?? ""
+    #expect(sentence.contains("将"))
+    #expect(sentence.contains("碰"))
+    #expect(sentence.split(separator: "、").count == 4)
+  }
 }

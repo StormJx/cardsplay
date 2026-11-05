@@ -150,4 +150,36 @@ public struct WinningStructure: Hashable, Codable, Sendable {
     self.pair = pair
     self.specialTiles = specialTiles.sorted()
   }
+
+  /// One sentence: the pair, then the four melds. Special hands name the shape.
+  public var settlementSentence: String {
+    switch shape {
+    case .standard:
+      let head = pair.map { "将\($0.spokenName)" } ?? "将"
+      let body = groups.map(Self.spokenGroup).joined(separator: "、")
+      return body.isEmpty ? head : "\(head)，\(body)"
+    case .sevenPairs:
+      return "七对"
+    case .thirteenOrphans:
+      return "十三幺"
+    case .lesserHonorsKnitted:
+      return "全不靠"
+    case .greaterHonorsKnitted:
+      return "七星不靠"
+    case .knittedStraight:
+      let head = pair.map { "将\($0.spokenName)" } ?? ""
+      return head.isEmpty ? "组合龙" : "组合龙，\(head)"
+    }
+  }
+
+  private static func spokenGroup(_ group: Group) -> String {
+    switch group {
+    case .chow:
+      return "吃" + group.tiles.map(\.spokenName).joined()
+    case let .pung(tile, _):
+      return "碰\(tile.spokenName)"
+    case let .kong(tile, _):
+      return "杠\(tile.spokenName)"
+    }
+  }
 }

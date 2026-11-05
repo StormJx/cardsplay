@@ -1,13 +1,16 @@
 import MahjongRules
 
 enum KongPolicy {
-  /// Concealed and added kongs only. A pair (将) or a tile that forms the tenpai wait is not used.
-  /// The inputs are the player's own tiles and meld count; opponent concealed tiles are not available.
+  /// Concealed, added, and exposed kongs. A pair (将) or a tile that forms the tenpai wait is not used.
+  /// Exposed claims pass a 13-tile hand (`removing` 3). Opponent concealed tiles are not an input.
   static func allows(kind: TileKind, removing: Int, tiles: [TileKind], meldCount: Int) -> Bool {
     let held = tiles.filter { $0 == kind }.count
     guard held >= removing, removing > 0 else { return false }
-    let complete = (4 - meldCount) * 3 + 2
+    let claimingDiscard = removing == 3
+    let complete = (4 - meldCount) * 3 + (claimingDiscard ? 1 : 2)
     guard tiles.count == complete else { return false }
+    // Konging the only pair leaves no pair. A tenpai tile is checked below.
+    guard hasOtherPair(tiles, besides: kind) else { return false }
 
     let unique = Set(tiles)
     let views = unique.map { discard -> (Int, [TileKind]) in

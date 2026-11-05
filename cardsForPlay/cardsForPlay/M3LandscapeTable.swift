@@ -29,7 +29,7 @@ struct M3LandscapeTable: View {
           statusBar
           board(compact: compact)
           operationBar
-          if model.practiceHints, model.result == nil, !model.showGameSetup {
+          if model.showsTableHints {
             practiceHints(compact: compact)
           }
           playerArea(compact: compact)
@@ -163,7 +163,14 @@ struct M3LandscapeTable: View {
           Text(model.message)
             .font(.system(size: compact ? 9 : 10))
             .foregroundStyle(.secondary)
-            .lineLimit(1)
+            .lineLimit(model.lessonActive ? 2 : 1)
+          if let notice = model.tableNotice {
+            Text(notice)
+              .font(.system(size: compact ? 9 : 10, weight: .bold))
+              .foregroundStyle(.yellow)
+              .lineLimit(1)
+              .accessibilityIdentifier("passed-win-notice")
+          }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 7)
@@ -214,18 +221,18 @@ struct M3LandscapeTable: View {
       .lineLimit(1)
       Text(
         model.tracksWinds
-          ? "\(model.windTag(seat)) · \(profile.difficulty.displayName)"
+          ? "\(model.windTag(seat)) · \(profile.personality.archetype.displayName)"
           : "\(profile.difficulty.displayName) · \(profile.personality.archetype.displayName)"
       )
         .font(.system(size: 6))
         .foregroundStyle(.cyan)
       if orientation == .top {
         HiddenHand(count: model.game.players[seat].concealed.count, vertical: false, style: model.backStyle)
-        MeldRack(melds: model.game.players[seat].melds, vertical: false)
+        MeldRack(melds: model.game.players[seat].melds, vertical: false, coverConcealedKongs: true)
       } else {
         HStack(spacing: 3) {
           HiddenHand(count: model.game.players[seat].concealed.count, vertical: true, style: model.backStyle)
-          MeldRack(melds: model.game.players[seat].melds, vertical: true)
+          MeldRack(melds: model.game.players[seat].melds, vertical: true, coverConcealedKongs: true)
         }
       }
     }
@@ -234,7 +241,7 @@ struct M3LandscapeTable: View {
     .accessibilityElement(children: .combine)
     .accessibilityLabel(
       model.tracksWinds
-        ? "\(role)，\(model.windTag(seat))，\(profile.name)，\(model.game.players[seat].concealed.count)张暗牌"
+        ? "\(role)，\(model.windTag(seat))，\(profile.name)，\(profile.personality.archetype.displayName)，\(model.game.players[seat].concealed.count)张暗牌"
         : "\(role)，\(profile.name)，\(profile.difficulty.displayName)，\(profile.personality.archetype.displayName)，\(model.game.players[seat].concealed.count)张暗牌"
     )
   }
@@ -261,6 +268,13 @@ struct M3LandscapeTable: View {
           .tint(action == .win ? .red : (action == .skip ? .gray : .orange))
           .accessibilityIdentifier("action-\(action.id)")
         }
+      }
+
+      if model.lessonActive {
+        Button("跳过") { model.skipTableLesson() }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .accessibilityIdentifier("lesson-skip")
       }
 
       Spacer(minLength: 0)
@@ -490,11 +504,19 @@ struct M3LandscapeTable: View {
               .foregroundStyle(.secondary)
           }
           if result.isDraw {
-            Text("流局").font(.title.bold())
-            Text("牌墙已摸完，本局无人和牌")
+            if model.puzzleMissed {
+              Text("未达成").font(.title.bold())
+              Text("摸进的牌没有和，这手结束")
+            } else {
+              Text("流局").font(.title.bold())
+              Text("牌墙已摸完，本局无人和牌")
+            }
           } else if let winner = result.winner, let score = result.score {
             Text("\(model.playerLabel(winner))和牌")
               .font(.title2.bold())
+            Text(score.structure.settlementSentence)
+              .font(.caption)
+              .multilineTextAlignment(.center)
             Text(result.discarder == nil ? "自摸" : "\(model.playerLabel(result.discarder!))放铳")
               .foregroundStyle(.secondary)
             Text(score.awards.map { "\($0.fan.name) \($0.points)番" }.joined(separator: " · "))
@@ -736,12 +758,11 @@ private struct HiddenHand: View {
 private struct MeldRack: View {
   let melds: [Meld]
   let vertical: Bool
-
-  private var tiles: [TileKind] { melds.flatMap(\.tiles) }
+  var coverConcealedKongs = false
 
   var body: some View {
     Group {
-      if tiles.isEmpty {
+      if melds.isEmpty {
         Text("鸣牌 —")
           .font(.system(size: 7))
           .foregroundStyle(.secondary)
@@ -755,15 +776,34 @@ private struct MeldRack: View {
         }
       }
     }
-    .accessibilityLabel(
-      tiles.isEmpty ? "没有鸣牌" : "鸣牌 \(tiles.map(\.displayName).joined(separator: "，"))")
+    .accessibilityLabel(accessibilityText)
+  }
+
+  private var accessibilityText: String {
+    if melds.isEmpty { return "没有鸣牌" }
+    return melds.map { meld in
+      if coverConcealedKongs, meld.type == .concealedKong {
+        return "暗杠四张盖住"
+      }
+      return meld.tiles.map(\.displayName).joined(separator: "，")
+    }.joined(separator: "，")
   }
 
   @ViewBuilder
   private var faces: some View {
-    ForEach(Array(tiles.enumerated()), id: \.offset) { _, kind in
-      GraphicTileFace(kind: kind, selected: false, miniature: true)
-        .frame(width: vertical ? 13 : 10, height: vertical ? 18 : 15)
+    ForEach(Array(melds.enumerated()), id: \.offset) { _, meld in
+      if coverConcealedKongs, meld.type == .concealedKong {
+        ForEach(0..<4, id: \.self) { _ in
+          RoundedRectangle(cornerRadius: 1)
+            .fill(Color.teal.opacity(0.9))
+            .frame(width: vertical ? 13 : 10, height: vertical ? 18 : 15)
+        }
+      } else {
+        ForEach(Array(meld.tiles.enumerated()), id: \.offset) { _, kind in
+          GraphicTileFace(kind: kind, selected: false, miniature: true)
+            .frame(width: vertical ? 13 : 10, height: vertical ? 18 : 15)
+        }
+      }
     }
   }
 }

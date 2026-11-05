@@ -18,6 +18,14 @@ public enum PlayMode: String, Codable, CaseIterable, Sendable {
     case .practice: return "练习"
     }
   }
+
+  /// Quick games, the East round, the 16-hand match, and practice show waits and the fan gap.
+  public var showsWaitsAndFan: Bool {
+    switch self {
+    case .quick, .round, .full, .practice: return true
+    case .career: return false
+    }
+  }
 }
 
 public struct AudioSettings: Codable, Equatable, Sendable {

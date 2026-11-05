@@ -137,9 +137,9 @@ struct GuideCover: View {
       HStack {
         Button("跳过") { model.completeGuide() }
         Spacer()
-        Button(step == steps.count - 1 ? "开始" : "下一步") {
+        Button(step == steps.count - 1 ? "上桌" : "下一步") {
           if step == steps.count - 1 {
-            model.completeGuide()
+            model.startTableLesson()
           } else {
             step += 1
           }

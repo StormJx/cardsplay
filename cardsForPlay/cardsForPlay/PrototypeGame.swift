@@ -108,6 +108,8 @@ final class PrototypeGame: ObservableObject {
   var mode = PlayMode.quick
   var careerLevelID: String?
   var practiceHints = false
+  var lessonActive = false
+  @Published var tableNotice: String?
 
   init() {
     if ProcessInfo.processInfo.arguments.contains("-reset-prototype") {
@@ -320,10 +322,15 @@ final class PrototypeGame: ObservableObject {
 
   private var practiceBriefCache: (key: String, brief: PracticeBrief)?
 
+  var showsTableHints: Bool {
+    mode.showsWaitsAndFan && result == nil && !showGameSetup
+  }
+
   var practiceBrief: PracticeBrief? {
-    guard practiceHints, result == nil else { return nil }
+    guard showsTableHints else { return nil }
     let selected = selectedTile?.kind.rawValue ?? -1
-    let key = "\(game.events.count)#\(game.phase)#\(selected)#\(game.players[0].concealed.map(\.kind.rawValue))#\(practiceSwitches)"
+    let drawn = freshDraw?.rawValue ?? -1
+    let key = "\(game.events.count)#\(game.phase)#\(selected)#\(drawn)#\(game.players[0].concealed.map(\.kind.rawValue))#\(practiceSwitches)#\(mode.rawValue)"
     if let practiceBriefCache, practiceBriefCache.key == key { return practiceBriefCache.brief }
     let player = game.players[0]
     let brief = PracticeCoach.brief(
@@ -338,7 +345,9 @@ final class PrototypeGame: ObservableObject {
       seatWind: seatWind(0),
       roundWind: currentRoundWind,
       unseen: { PublicInfo.unseenCount(state: self.game, kind: $0) },
-      switches: practiceSwitches
+      switches: practiceSwitches,
+      drawn: freshDraw,
+      scope: mode == .practice ? .full : .waitsAndFan
     )
     practiceBriefCache = (key, brief)
     return brief
@@ -482,6 +491,9 @@ final class PrototypeGame: ObservableObject {
   func startGame(difficulty: AIDifficulty) {
     driveTask?.cancel()
     clearFork()
+    lessonActive = false
+    puzzleMissedFlag = false
+    tableNotice = nil
     selectedDifficulty = difficulty
     mode = pendingMode
     if mode != .career { careerLevelID = nil }
@@ -597,12 +609,38 @@ final class PrototypeGame: ObservableObject {
       try apply(.discard(seat: 0, tile: tile))
       clearHandSelection()
       actions = []
-      message = "你打出 \(tile.kind.displayName)"
+      if endPuzzleIfDiscarded() { return }
+      message = lessonActive ? TableLesson.prompt(state: game) : "你打出 \(tile.kind.displayName)"
       scheduleDrive()
     } catch {
       message = "不能打出这张牌：\(error)"
     }
   }
+
+  private func endPuzzleIfDiscarded() -> Bool {
+    guard let puzzle = activePuzzle, CareerDeals.endsOnDiscard(puzzle) else { return false }
+    puzzleMissedFlag = true
+    let deltas = [0, 0, 0, 0]
+    lastMethod = nil
+    result = RoundResult(winner: nil, discarder: nil, score: nil, deltas: deltas)
+    actions = []
+    message = "这手未达成"
+    archiveFinished(
+      winner: nil, discarder: nil, score: nil, method: nil, deltas: deltas, drawn: true)
+    persist()
+    return true
+  }
+
+  private var activePuzzle: CareerPuzzle? {
+    guard mode == .career, let careerLevelID else { return nil }
+    return CareerCatalog.level(id: careerLevelID)?.puzzle
+  }
+
+  var puzzleMissed: Bool {
+    puzzleMissedFlag && result?.isDraw == true
+  }
+
+  private var puzzleMissedFlag = false
 
   private func clearHandSelection() {
     selectedTile = nil
@@ -669,8 +707,24 @@ final class PrototypeGame: ObservableObject {
           return
         }
         await waitForAI()
-        if finishSelfDrawIfLegal(seat: seat) { return }
+        if !lessonActive, finishSelfDrawIfLegal(seat: seat) { return }
         do {
+          if lessonActive {
+            let count = discardCount(seat)
+            guard let kind = TableLesson.scriptedDiscard(
+              seat: seat,
+              hand: game.players[seat].concealed.map(\.kind),
+              discardsSoFar: count
+            ),
+              let tile = game.players[seat].concealed.first(where: { $0.kind == kind })
+            else {
+              message = "固定牌打不下去"
+              return
+            }
+            try apply(.discard(seat: seat, tile: tile))
+            message = "\(playerLabel(seat))打出 \(tile.kind.displayName)"
+            continue
+          }
           let information = aiInformation(seat: seat)
           if let kind = game.concealedKongKinds(seat: seat).first(where: { kind in
             MahjongAIDecider.shouldDeclareKong(kind: kind, removing: 4, information: information)
@@ -703,8 +757,19 @@ final class PrototypeGame: ObservableObject {
         let humanActions = responseActions(discarder: discarder, tile: tile)
         if discarder != 0, !humanActions.isEmpty {
           actions = humanActions + [.skip]
-          message = "请选择是否响应 \(tile.kind.displayName)"
+          message = lessonActive
+            ? TableLesson.prompt(state: game)
+            : "请选择是否响应 \(tile.kind.displayName)"
           return
+        }
+        if lessonActive {
+          do {
+            try resolveClaims([], discarder: discarder, tile: tile, method: .discard)
+          } catch {
+            message = "响应失败：\(error)"
+            return
+          }
+          continue
         }
         do {
           try resolveClaims(
@@ -749,6 +814,10 @@ final class PrototypeGame: ObservableObject {
     actions += game.concealedKongKinds(seat: 0).map(HumanAction.concealedKong)
     actions += game.addedKongIndices(seat: 0).map { index in
       .addedKong(index: index, kind: game.players[0].melds[index].kind)
+    }
+    if lessonActive {
+      message = TableLesson.prompt(state: game)
+      return
     }
     if actions.contains(.win) {
       message = "这手可以和。再点已选中的牌会先确认"
@@ -809,10 +878,17 @@ final class PrototypeGame: ObservableObject {
       default:
         return
       }
+      let passedWin = actions.contains(.win) && action != .win
       actions = []
       clearHandSelection()
       try resolveClaims(
         claims, discarder: discarder, tile: tile, method: .discard)
+      if passedWin, result == nil {
+        tableNotice = "这张可以和，你放过了。"
+      }
+      if lessonActive, result == nil {
+        message = TableLesson.prompt(state: game)
+      }
       scheduleDrive()
 
     case let .awaitingRobKong(declarer, _, tile):
@@ -848,6 +924,7 @@ final class PrototypeGame: ObservableObject {
   }
 
   private func aiClaims(discarder: Int, tile: Tile, method: WinMethod) -> [Claim] {
+    if lessonActive { return [] }
     let wins = aiWinClaims(discarder: discarder, tile: tile, method: method)
     if !wins.isEmpty { return wins }
 
@@ -875,16 +952,13 @@ final class PrototypeGame: ObservableObject {
       {
         claims.append(Claim(seat: seat, type: .pung))
       }
-      if let run = game.legalChows(
-        seat: seat, discard: tile.kind, discarder: discarder
-      ).first,
-        MahjongAIDecider.shouldClaim(
-          .chow(run),
-          discardedTile: tile.kind,
-          information: information,
-          profile: profile,
-          decisionSeed: seed)
-      {
+      if let run = MahjongAIDecider.chooseChow(
+        options: game.legalChows(seat: seat, discard: tile.kind, discarder: discarder),
+        discardedTile: tile.kind,
+        information: information,
+        profile: profile,
+        decisionSeed: seed
+      ) {
         claims.append(Claim(seat: seat, type: .chow, chowTiles: run))
       }
     }
@@ -892,7 +966,8 @@ final class PrototypeGame: ObservableObject {
   }
 
   private func aiWinClaims(discarder: Int, tile: Tile, method: WinMethod) -> [Claim] {
-    (1..<4).compactMap { seat in
+    if lessonActive { return [] }
+    return (1..<4).compactMap { seat in
       guard seat != discarder,
         !game.players[seat].isWinSuspended,
         legalScore(seat: seat, tile: tile.kind, method: method) != nil
@@ -1001,6 +1076,10 @@ final class PrototypeGame: ObservableObject {
       spoken = "和，\(fan)"
     }
     TableSound.shared.speak(spoken, settings: library.audio)
+    if lessonActive {
+      lessonActive = false
+      library.sawGuide = true
+    }
     closeFortuneIfMatchOver()
     archiveFinished(
       winner: winner, discarder: discarder, score: score, method: method, deltas: deltas,
@@ -1171,7 +1250,7 @@ final class PrototypeGame: ObservableObject {
   }
 
   private func offerDrawFortune() {
-    guard fortune.drawHelp, mode != .practice else { return }
+    guard fortune.drawHelp, mode != .practice, !lessonActive else { return }
     guard let drawn = game.events.last.flatMap({ event -> Tile? in
       if case .drew(let seat, let tile) = event, seat == 0 { return tile }
       return nil
@@ -1265,6 +1344,8 @@ final class PrototypeGame: ObservableObject {
     selectedDifficulty = difficulty
     mode = .career
     practiceHints = false
+    lessonActive = false
+    puzzleMissedFlag = false
     roundHandIndex = 0
     roundInitialDealer = 0
     handSeed = 0
@@ -1304,6 +1385,66 @@ final class PrototypeGame: ObservableObject {
   func completeGuide() {
     library.sawGuide = true
     persist()
+  }
+
+  func startTableLesson() {
+    driveTask?.cancel()
+    clearFork()
+    selectedDifficulty = .beginner
+    mode = .quick
+    pendingMode = .quick
+    careerLevelID = nil
+    practiceHints = false
+    lessonActive = true
+    puzzleMissedFlag = false
+    tableNotice = nil
+    handSeed = 0
+    roundHandIndex = 0
+    roundInitialDealer = 0
+    roundDealer = nil
+    game = TableLesson.opening()
+    steps = []
+    canReplay = false
+    result = nil
+    lastMethod = nil
+    careerNote = nil
+    lastRecordID = nil
+    actions = []
+    clearHandSelection()
+    isPaused = false
+    showGameSetup = false
+    sessionActive = true
+    route = .table
+    aiDecisionLogs = [:]
+    cumulativeScores = [0, 0, 0, 0]
+    message = TableLesson.prompt(state: game)
+    finishFortuneGame()
+    TableSound.shared.sync(library.audio, calm: musicIsCalm)
+    persist()
+    scheduleDrive()
+  }
+
+  func skipTableLesson() {
+    lessonActive = false
+    library.sawGuide = true
+    persist()
+    returnHome()
+  }
+
+  private var freshDraw: TileKind? {
+    guard case .awaitingDiscard(let seat) = game.phase, seat == 0,
+      case .drew(let drawSeat, let tile) = game.events.last, drawSeat == 0
+    else { return nil }
+    return tile.kind
+  }
+
+  private func discardCount(_ seat: Int) -> Int {
+    game.events.reduce(0) { count, event in
+      if case .discarded(let discardedSeat, _) = event, discardedSeat == seat {
+        return count + 1
+      }
+      return count
+    }
   }
 
   var musicIsCalm: Bool {
@@ -1375,6 +1516,8 @@ final class PrototypeGame: ObservableObject {
       mode: mode,
       careerLevelID: careerLevelID,
       practiceHints: practiceHints,
+      lessonActive: lessonActive,
+      puzzleMissed: puzzleMissedFlag,
       lastRecordID: lastRecordID,
       roundHandIndex: tracksWinds ? roundHandIndex : nil,
       roundInitialDealer: tracksWinds ? roundInitialDealer : nil,
@@ -1412,6 +1555,8 @@ final class PrototypeGame: ObservableObject {
     forkWind = session.forkWind.flatMap(Wind.init(rawValue:))
     careerLevelID = session.careerLevelID
     practiceHints = session.practiceHints
+    lessonActive = session.lessonActive ?? false
+    puzzleMissedFlag = session.puzzleMissed ?? false
     lastRecordID = session.lastRecordID
     isPaused = session.paused
     sessionActive = true

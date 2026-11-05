@@ -9,6 +9,14 @@ public enum CareerDeals {
     return build(held: held, draw: draw)
   }
 
+  /// These openings use a short wall. Discarding the completing tile ends the hand unfinished.
+  public static func endsOnDiscard(_ puzzle: CareerPuzzle) -> Bool {
+    switch puzzle {
+    case .sevenPairs, .honorsKnitted, .knittedStraight:
+      return true
+    }
+  }
+
   public static func tiles(for puzzle: CareerPuzzle) -> [TileKind] {
     switch puzzle {
     case .sevenPairs:

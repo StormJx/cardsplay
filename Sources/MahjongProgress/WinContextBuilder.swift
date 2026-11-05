@@ -28,7 +28,9 @@ public enum WinContextBuilder {
       seatWind: seatWind ?? Wind(rawValue: seat)!,
       roundWind: roundWind,
       flowerCount: player.flowers.count,
-      isLastWallTile: state.wall.isEmpty
+      isLastWallTile: state.wall.isEmpty,
+      visibleTileCounts: seenCounts(
+        state: state, seat: seat, winningTile: winningTile, winningTileIsInHand: true)
     )
   }
 
@@ -49,7 +51,9 @@ public enum WinContextBuilder {
       seatWind: seatWind ?? Wind(rawValue: seat)!,
       roundWind: roundWind,
       flowerCount: player.flowers.count,
-      isLastDiscard: state.wall.isEmpty
+      isLastDiscard: state.wall.isEmpty,
+      visibleTileCounts: seenCounts(
+        state: state, seat: seat, winningTile: tile, winningTileIsInHand: false)
     )
   }
 
@@ -88,15 +92,56 @@ public enum WinContextBuilder {
     }
   }
 
+  /// Copies already seen, not counting the winning tile itself.
+  /// Opponent concealed kongs stay hidden. The winner's own hand and melds count.
+  private static func seenCounts(
+    state: GameState,
+    seat: Int,
+    winningTile: TileKind,
+    winningTileIsInHand: Bool
+  ) -> [TileKind: Int] {
+    var counts: [TileKind: Int] = [:]
+    func add(_ kind: TileKind) {
+      counts[kind, default: 0] += 1
+    }
+    for tile in state.players[seat].concealed { add(tile.kind) }
+    for meld in state.players[seat].melds {
+      for tile in meld.tiles { add(tile) }
+    }
+    for tile in state.players[seat].flowers { add(tile.kind) }
+    if winningTileIsInHand {
+      counts[winningTile, default: 0] -= 1
+      if counts[winningTile] == 0 { counts.removeValue(forKey: winningTile) }
+    }
+    for other in 0..<4 where other != seat {
+      for meld in state.players[other].melds where meld.type != .concealedKong {
+        for tile in meld.tiles { add(tile) }
+      }
+      for tile in state.players[other].flowers { add(tile.kind) }
+    }
+    for tile in PublicInfo.rivers(events: state.events).flatMap({ $0 }) { add(tile) }
+    if !winningTileIsInHand,
+      case .awaitingResponses(_, let tile) = state.phase,
+      tile.kind == winningTile
+    {
+      counts[winningTile, default: 0] -= 1
+      if counts[winningTile] == 0 { counts.removeValue(forKey: winningTile) }
+    }
+    return counts.filter { $0.value > 0 }
+  }
+
+  /// A flower drawn while replacing a kong uses up the replacement. The next tile is not 杠上开花.
   private static func selfDrawMethod(state: GameState, seat: Int) -> WinMethod {
+    var sawFlower = false
     for event in state.events.dropLast().reversed() {
       switch event {
       case .exposedFlower:
+        sawFlower = true
         continue
       case let .declaredKong(kongSeat, _, _) where kongSeat == seat:
-        return .kongReplacement
+        return sawFlower ? .selfDraw : .kongReplacement
       case let .claimed(claimSeat, type, _) where claimSeat == seat && type == .exposedKong:
-        return .kongReplacement
+        return sawFlower ? .selfDraw : .kongReplacement
       default:
         return .selfDraw
       }

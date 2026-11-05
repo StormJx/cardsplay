@@ -92,6 +92,12 @@ struct GameEngineTests {
       ClaimResolver.resolve(discarder: 0, claims: Array(claims.dropLast()))?.type == .exposedKong)
     let equal = [Claim(seat: 3, type: .win), Claim(seat: 1, type: .win)]
     #expect(ClaimResolver.resolve(discarder: 0, claims: equal)?.seat == 1)
+    let nearPung = [
+      Claim(seat: 1, type: .pung),
+      Claim(seat: 2, type: .exposedKong),
+    ]
+    #expect(ClaimResolver.resolve(discarder: 0, claims: nearPung)?.seat == 1)
+    #expect(ClaimResolver.resolve(discarder: 0, claims: nearPung)?.type == .pung)
   }
 
   @Test func pungClaimMovesDiscardIntoMeld() throws {

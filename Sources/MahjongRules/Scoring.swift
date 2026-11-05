@@ -1,7 +1,8 @@
 public enum MCRScorer {
   public static func score(_ context: WinContext) -> ScoreResult? {
-    WinningAnalyzer.structures(for: context)
-      .map { score(context, structure: $0) }
+    let onlyWait = isOnlyWait(context)
+    return WinningAnalyzer.structures(for: context)
+      .map { score(context, structure: $0, onlyWait: onlyWait) }
       .max { lhs, rhs in
         if lhs.totalPoints != rhs.totalPoints { return lhs.totalPoints < rhs.totalPoints }
         let l = lhs.awards.map(\.fan.rawValue)
@@ -11,11 +12,35 @@ public enum MCRScorer {
   }
 
   public static func scores(_ context: WinContext) -> [ScoreResult] {
-    WinningAnalyzer.structures(for: context).map { score(context, structure: $0) }
+    let onlyWait = isOnlyWait(context)
+    return WinningAnalyzer.structures(for: context).map {
+      score(context, structure: $0, onlyWait: onlyWait)
+    }
   }
 
-  private static func score(_ context: WinContext, structure: WinningStructure) -> ScoreResult {
-    let detector = Detector(context: context, structure: structure)
+  /// True when no other tile completes a winning shape. Used for 单钓将.
+  private static func isOnlyWait(_ context: WinContext) -> Bool {
+    var base = context.concealedTiles
+    guard let index = base.firstIndex(of: context.winningTile) else { return false }
+    base.remove(at: index)
+    for kind in TileSet.normalKinds where kind != context.winningTile {
+      let trial = WinContext(
+        concealedTiles: base + [kind],
+        melds: context.melds,
+        winningTile: kind,
+        method: context.method,
+        seatWind: context.seatWind,
+        roundWind: context.roundWind
+      )
+      if WinningAnalyzer.hasWinningStructure(trial) { return false }
+    }
+    return true
+  }
+
+  private static func score(
+    _ context: WinContext, structure: WinningStructure, onlyWait: Bool
+  ) -> ScoreResult {
+    let detector = Detector(context: context, structure: structure, onlyWait: onlyWait)
     var candidates = detector.detect()
 
     let nonFlowerCandidates = candidates.filter { $0.fan != .flower }
@@ -71,6 +96,7 @@ public enum MCRScorer {
 private struct Detector {
   let context: WinContext
   let structure: WinningStructure
+  let onlyWait: Bool
 
   private var allTiles: [TileKind] { context.allTiles }
   private var groups: [Group] { structure.groups }
@@ -155,11 +181,15 @@ private struct Detector {
     if triplePungCount > 0 { add(.triplePung, count: triplePungCount) }
     if concealedPungs == 3 { add(.threeConcealedPungs) }
 
-    // 12 fan.
+    // 12 fan. 全大于五 / 全小于五 are suited tiles only; an honor blocks the fan.
     if structure.shape == .lesserHonorsKnitted { add(.lesserHonorsKnitted) }
     if structure.shape == .knittedStraight { add(.knittedStraight) }
-    if !allRanks.isEmpty, allRanks.allSatisfy({ $0 > 5 }) { add(.upperFour) }
-    if !allRanks.isEmpty, allRanks.allSatisfy({ $0 < 5 }) { add(.lowerFour) }
+    if !allTiles.isEmpty, allTiles.allSatisfy({ $0.rank.map { $0 > 5 } == true }) {
+      add(.upperFour)
+    }
+    if !allTiles.isEmpty, allTiles.allSatisfy({ $0.rank.map { $0 < 5 } == true }) {
+      add(.lowerFour)
+    }
     if windPungs.count == 3 { add(.bigThreeWinds) }
 
     // 8 fan.
@@ -404,18 +434,46 @@ private struct Detector {
 
   private enum Wait { case edge, closed, single }
   private var waitType: Wait? {
-    if pair == context.winningTile { return .single }
+    if let doubled = doubledIdenticalWait { return doubled }
+    if pair == context.winningTile { return onlyWait ? .single : nil }
+    guard let chow = singleMatchingChow else { return nil }
+    if isClosed(chow) { return .closed }
+    if isEdge(chow) { return .edge }
+    return nil
+  }
+
+  /// Two identical edge waits, or two identical closed waits, still score that 1 fan.
+  private var doubledIdenticalWait: Wait? {
+    let matching = matchingChows
+    guard matching.count >= 2, Set(matching).count == 1, let chow = matching.first else {
+      return nil
+    }
+    if isClosed(chow) { return .closed }
+    if isEdge(chow) { return .edge }
+    return nil
+  }
+
+  private var singleMatchingChow: ChowKey? {
+    let matching = matchingChows
+    guard matching.count == 1 else { return nil }
+    return matching[0]
+  }
+
+  private var matchingChows: [ChowKey] {
     guard let winningRank = context.winningTile.rank, let winningSuit = context.winningTile.suit
-    else { return nil }
-    let matching = chows.compactMap(chowKey).filter {
+    else { return [] }
+    return chows.compactMap(chowKey).filter {
       $0.suit == winningSuit && ($0.start...($0.start + 2)).contains(winningRank)
     }
-    guard matching.count == 1, let chow = matching.first else { return nil }
-    if winningRank == chow.start + 1 { return .closed }
-    if (chow.start == 1 && winningRank == 3) || (chow.start == 7 && winningRank == 7) {
-      return .edge
-    }
-    return nil
+  }
+
+  private func isClosed(_ chow: ChowKey) -> Bool {
+    context.winningTile.rank == chow.start + 1
+  }
+
+  private func isEdge(_ chow: ChowKey) -> Bool {
+    guard let winningRank = context.winningTile.rank else { return false }
+    return (chow.start == 1 && winningRank == 3) || (chow.start == 7 && winningRank == 7)
   }
 
   private struct ChowKey: Hashable {

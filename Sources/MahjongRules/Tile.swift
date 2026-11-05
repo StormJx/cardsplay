@@ -79,6 +79,15 @@ public enum TileKind: Int, CaseIterable, Codable, Comparable, Sendable {
     return (2...8).contains(rank)
   }
 
+  public var spokenName: String {
+    if let suit, let rank {
+      return "\(rank)\(["万", "筒", "条"][suit.rawValue])"
+    }
+    if let wind { return ["东", "南", "西", "北"][wind.rawValue] }
+    if let dragon { return ["中", "发", "白"][dragon.rawValue] }
+    return "花"
+  }
+
   public var shortName: String {
     if let suit, let rank {
       return "\(rank)\(["m", "p", "s"][suit.rawValue])"

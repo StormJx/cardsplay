@@ -41,6 +41,11 @@ public struct DiscardStudy: Equatable, Sendable {
   public let estimatedFan: Int
 }
 
+public enum PracticeHintScope: Equatable, Sendable {
+  case full
+  case waitsAndFan
+}
+
 public struct PracticeBrief: Equatable, Sendable {
   public let waitLine: String
   public let fanLine: String
@@ -64,7 +69,9 @@ public enum PracticeCoach {
     seatWind: Wind,
     roundWind: Wind,
     unseen: (TileKind) -> Int,
-    switches: PracticeSwitches = PracticeSwitches()
+    switches: PracticeSwitches = PracticeSwitches(),
+    drawn: TileKind? = nil,
+    scope: PracticeHintScope = .full
   ) -> PracticeBrief {
     let complete = (4 - melds.count) * 3 + 2
     let discard: TileKind?
@@ -96,14 +103,17 @@ public enum PracticeCoach {
     let conflicts = conflictingFanNames(tiles: concealed + melds.flatMap(\.tiles), melds: melds)
     let idle = idleShanten(
       concealed: concealed, meldCount: melds.count, waits: waits, tenpai: tenpai, unseen: unseen)
-    return PracticeBrief(
+    let shortFan = discarding ? shortHandFan(
+      concealed: concealed, melds: melds, drawn: drawn, seatWind: seatWind, roundWind: roundWind
+    ) : nil
+    let brief = PracticeBrief(
       waitLine: switches.waits
         ? (tenpai
           ? waitLine(discard: discard, waits: waits, discarding: discarding, showRemaining: switches.remaining)
           : "")
         : "听 已关闭",
       fanLine: switches.fans
-        ? (tenpai ? fanLine(waits: waits, held: held) : "")
+        ? fanLine(waits: waits, held: held, tenpai: tenpai, shortHand: shortFan)
         : "番 已关闭",
       dangerLine: switches.danger
         ? (tenpai
@@ -118,6 +128,37 @@ public enum PracticeCoach {
       conflictLine: switches.fans && tenpai && !conflicts.isEmpty
         ? "和当前牌冲突 " + conflicts.joined(separator: "、") : ""
     )
+    guard scope == .waitsAndFan else { return brief }
+    return PracticeBrief(
+      waitLine: brief.waitLine,
+      fanLine: brief.fanLine,
+      dangerLine: "",
+      shantenLine: "",
+      blockedLine: "",
+      conflictLine: ""
+    )
+  }
+
+  /// Fan of the hand just drawn, when the shape is complete and non-flower points are under 8.
+  private static func shortHandFan(
+    concealed: [TileKind],
+    melds: [Meld],
+    drawn: TileKind?,
+    seatWind: Wind,
+    roundWind: Wind
+  ) -> Int? {
+    let complete = (4 - melds.count) * 3 + 2
+    guard concealed.count == complete, let drawn, concealed.contains(drawn) else { return nil }
+    let context = WinContext(
+      concealedTiles: concealed,
+      melds: melds,
+      winningTile: drawn,
+      method: .selfDraw,
+      seatWind: seatWind,
+      roundWind: roundWind
+    )
+    guard let score = MCRScorer.score(context), score.nonFlowerPoints < 8 else { return nil }
+    return score.nonFlowerPoints
   }
 
   private static func isTenpai(
@@ -528,17 +569,22 @@ public enum PracticeCoach {
     return best
   }
 
-  private static func fanLine(waits: [PracticeWait], held: [TileKind]) -> String {
+  private static func fanLine(
+    waits: [PracticeWait], held: [TileKind], tenpai: Bool, shortHand: Int?
+  ) -> String {
+    if let shortHand {
+      return "只有\(shortHand)番，不够 8 番"
+    }
     let close = closeFanNotes(tiles: held)
-    guard let best = waits.max(by: { $0.nonFlowerPoints < $1.nonFlowerPoints }) else {
-      return close.isEmpty ? "番 还看不出接近的番" : "番 " + close.joined(separator: " · ")
+    guard tenpai, let best = waits.max(by: { $0.nonFlowerPoints < $1.nonFlowerPoints }) else {
+      return ""
     }
     let names = best.fanNames.prefix(3).joined(separator: "、")
     let scored = names.isEmpty ? "番 还没有成型的番" : "番 已有\(names)"
     if best.nonFlowerPoints >= 8 {
       return "\(scored)，共\(best.nonFlowerPoints)番"
     }
-    let gap = "还差\(max(1, 8 - best.nonFlowerPoints))番"
+    let gap = "只有\(best.nonFlowerPoints)番，还差\(max(1, 8 - best.nonFlowerPoints))番"
     let extra = close.prefix(2).joined(separator: " · ")
     return extra.isEmpty ? "\(scored)，\(gap)" : "\(scored)，\(gap) · \(extra)"
   }

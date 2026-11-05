@@ -17,11 +17,21 @@ public struct Claim: Equatable, Codable, Sendable {
   }
 }
 public enum ClaimResolver {
+  /// Win outranks everything. Pung and exposed kong are the same rank, ahead of chow.
+  /// The same rank goes to the seat closer to the discarder, so a nearer pung beats a farther kong.
   public static func resolve(discarder: Int, claims: [Claim]) -> Claim? {
     claims.sorted {
-      if $0.type.rawValue != $1.type.rawValue { return $0.type.rawValue > $1.type.rawValue }
+      if priority($0.type) != priority($1.type) { return priority($0.type) > priority($1.type) }
       return distance(from: discarder, to: $0.seat) < distance(from: discarder, to: $1.seat)
     }.first
+  }
+
+  private static func priority(_ type: ClaimType) -> Int {
+    switch type {
+    case .win: return 3
+    case .pung, .exposedKong: return 2
+    case .chow: return 1
+    }
   }
 
   private static func distance(from: Int, to: Int) -> Int {

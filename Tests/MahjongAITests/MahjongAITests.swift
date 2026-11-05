@@ -36,7 +36,7 @@ struct MahjongAITests {
       pung(.red), pung(.green), pung(.east),
     ]
     let information = fixture(
-      "123m456p789s22m",
+      "123m456p789s11s",
       honors: [.white, .west, .north],
       discards: discards,
       publicMelds: melds,
@@ -168,6 +168,106 @@ struct MahjongAITests {
     #expect(
       MahjongAIDecider.shouldDeclareKong(kind: .east, removing: 4, information: hidden)
         == MahjongAIDecider.shouldDeclareKong(kind: .east, removing: 4, information: spareQuad))
+  }
+
+  @Test func exposedKongKeepsThePairAndChowUsesEfficiency() {
+    let spare = kongInformation([
+      .character1, .character2, .character3,
+      .character4, .character5, .character6,
+      .character7, .character8,
+      .dot9, .dot9,
+      .east, .east, .east,
+    ])
+    let aggressive = OpponentProfile.standardOpponents(difficulty: .expert)[0]
+    #expect(
+      MahjongAIDecider.shouldClaim(
+        .exposedKong, discardedTile: .east, information: spare, profile: aggressive,
+        decisionSeed: 1))
+
+    let onlyPair = kongInformation([
+      .character1, .character2, .character3,
+      .character4, .character5, .character6,
+      .character7, .character8,
+      .dot9,
+      .bamboo9,
+      .east, .east, .east,
+    ])
+    #expect(
+      !MahjongAIDecider.shouldClaim(
+        .exposedKong, discardedTile: .east, information: onlyPair, profile: aggressive,
+        decisionSeed: 1))
+
+    let chowHand = kongInformation([
+      .character2, .character3, .character3, .character5, .character6,
+      .dot1, .dot9, .bamboo1, .bamboo9,
+      .south, .north, .white, .green,
+    ])
+    let chosen = MahjongAIDecider.chooseChow(
+      options: [
+        [.character2, .character3, .character4],
+        [.character3, .character4, .character5],
+        [.character4, .character5, .character6],
+      ],
+      discardedTile: .character4,
+      information: chowHand,
+      profile: aggressive,
+      decisionSeed: 2
+    )
+    #expect(chosen == [.character4, .character5, .character6])
+  }
+
+  @Test func dangerCountsTilesInHandAndIgnoresConcealedKongs() {
+    var melds = Array(repeating: [Meld](), count: 4)
+    melds[2] = [pung(.red), pung(.green)]
+    let holdingThree = AIInformationSet(
+      seat: 1,
+      ownTiles: [.character5, .character5, .character5, .east],
+      ownMelds: [],
+      discards: Array(repeating: [], count: 4),
+      publicMelds: melds,
+      exposedFlowers: Array(repeating: [], count: 4),
+      wallRemaining: 40,
+      scores: [0, 0, 0, 0],
+      roundWind: .east,
+      actionNumber: 4
+    )
+    let holdingOne = AIInformationSet(
+      seat: 1,
+      ownTiles: [.character5, .east, .south, .west],
+      ownMelds: [],
+      discards: Array(repeating: [], count: 4),
+      publicMelds: melds,
+      exposedFlowers: Array(repeating: [], count: 4),
+      wallRemaining: 40,
+      scores: [0, 0, 0, 0],
+      roundWind: .east,
+      actionNumber: 4
+    )
+    let safe = MahjongAIDecider.chooseDiscard(
+      information: holdingThree, profile: OpponentProfile.standardOpponents(difficulty: .expert)[1],
+      decisionSeed: 1)
+    let exposed = MahjongAIDecider.chooseDiscard(
+      information: holdingOne, profile: OpponentProfile.standardOpponents(difficulty: .expert)[1],
+      decisionSeed: 1)
+    #expect(safe.candidates.first { $0.tile == .character5 }?.danger == 0)
+    #expect((exposed.candidates.first { $0.tile == .character5 }?.danger ?? 0) > 0)
+
+    var hidden = melds
+    hidden[2].append(Meld(type: .concealedKong, tiles: Array(repeating: .east, count: 4)))
+    let withHidden = AIInformationSet(
+      seat: 1,
+      ownTiles: holdingOne.ownTiles,
+      ownMelds: [],
+      discards: Array(repeating: [], count: 4),
+      publicMelds: hidden,
+      exposedFlowers: Array(repeating: [], count: 4),
+      wallRemaining: 40,
+      scores: [0, 0, 0, 0],
+      roundWind: .east,
+      actionNumber: 4
+    )
+    #expect(withHidden.visibleTileCounts[.east, default: 0] == 0)
+    #expect(withHidden.visibleTileCounts[.east, default: 0] == holdingOne.visibleTileCounts[.east, default: 0])
   }
 
   @Test func informationSetSerializationContainsNoHiddenState() throws {

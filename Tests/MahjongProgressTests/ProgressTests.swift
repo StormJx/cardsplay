@@ -741,6 +741,196 @@ struct ProgressTests {
     )
   }
 
+  @Test func seenCopiesScoreTheLastTileAndFlowersCancelKongReplacement() {
+    let hand = winningHand(winning: .bamboo5)
+    var players = Array(repeating: PlayerState(), count: 4)
+    players[0].concealed = hand
+    let discards = (0..<3).map { Tile(kind: .bamboo5, copy: $0) }
+    var events = discards.map { GameEvent.discarded(seat: 1, tile: $0) }
+    events.append(.drew(seat: 0, tile: hand.first { $0.kind == .bamboo5 }!))
+    let seen = GameState(
+      wall: Wall(tiles: [Tile(kind: .dot1, copy: 0)]),
+      players: players,
+      discards: discards,
+      phase: .awaitingDiscard(seat: 0),
+      events: events
+    )
+    let scored = MCRScorer.score(WinContextBuilder.selfDraw(state: seen, seat: 0)!)
+    #expect(scored?.awards.contains { $0.fan == .lastTile } == true)
+
+    players[2].melds = [
+      Meld(type: .concealedKong, tiles: Array(repeating: .bamboo5, count: 4))
+    ]
+    let hidden = GameState(
+      wall: Wall(tiles: [Tile(kind: .dot1, copy: 0)]),
+      players: players,
+      phase: .awaitingDiscard(seat: 0),
+      events: [.drew(seat: 0, tile: hand.first { $0.kind == .bamboo5 }!)]
+    )
+    let hiddenScore = MCRScorer.score(WinContextBuilder.selfDraw(state: hidden, seat: 0)!)
+    #expect(hiddenScore?.awards.contains { $0.fan == .lastTile } != true)
+
+    let flowerEvents: [GameEvent] = [
+      .declaredKong(seat: 0, kind: .east, concealed: true),
+      .exposedFlower(seat: 0, tile: Tile(kind: .spring, copy: 0)),
+      .drew(seat: 0, tile: hand.first { $0.kind == .bamboo5 }!),
+    ]
+    let afterFlower = GameState(
+      wall: Wall(tiles: [Tile(kind: .dot1, copy: 1)]),
+      players: players,
+      phase: .awaitingDiscard(seat: 0),
+      events: flowerEvents
+    )
+    let flowerContext = WinContextBuilder.selfDraw(state: afterFlower, seat: 0)
+    #expect(flowerContext?.method == .selfDraw)
+    #expect(MCRScorer.score(flowerContext!)?.awards.contains { $0.fan == .outWithReplacement } != true)
+
+    let kongEvents: [GameEvent] = [
+      .declaredKong(seat: 0, kind: .east, concealed: true),
+      .drew(seat: 0, tile: hand.first { $0.kind == .bamboo5 }!),
+    ]
+    let kongDraw = GameState(
+      wall: Wall(tiles: [Tile(kind: .dot1, copy: 2)]),
+      players: [players[0], PlayerState(), PlayerState(), PlayerState()],
+      phase: .awaitingDiscard(seat: 0),
+      events: kongEvents
+    )
+    #expect(WinContextBuilder.selfDraw(state: kongDraw, seat: 0)?.method == .kongReplacement)
+  }
+
+  @Test func quickRoundAndMatchShowWaitsWhileAShortHandSaysHowManyFan() {
+    #expect(PlayMode.quick.showsWaitsAndFan)
+    #expect(PlayMode.round.showsWaitsAndFan)
+    #expect(PlayMode.full.showsWaitsAndFan)
+    #expect(!PlayMode.career.showsWaitsAndFan)
+
+    let concealed: [TileKind] = [
+      .character1, .character2, .character3,
+      .character4, .character5, .character6,
+      .character7, .character8, .character9,
+      .dot2, .dot3, .white, .white, .east,
+    ]
+    let brief = PracticeCoach.brief(
+      concealed: concealed,
+      melds: [],
+      discarding: true,
+      selected: .east,
+      discards: [[], [], [], []],
+      exposedMelds: [[], [], [], []],
+      scores: [0, 0, 0, 0],
+      seat: 0,
+      seatWind: .east,
+      roundWind: .east,
+      unseen: { _ in 4 },
+      scope: .waitsAndFan
+    )
+    #expect(brief.waitLine.contains("听"))
+    #expect(brief.fanLine.contains("番"))
+    #expect(brief.shantenLine.isEmpty)
+    #expect(brief.dangerLine.isEmpty)
+
+    let short = PracticeCoach.brief(
+      concealed: [
+        .character2, .character3, .character4,
+        .character5, .character5, .character5,
+        .character6, .character7, .character8,
+        .east, .east,
+      ],
+      melds: [Meld(type: .chow, tiles: [.character1, .character2, .character3])],
+      discarding: true,
+      selected: nil,
+      discards: [[], [], [], []],
+      exposedMelds: [[], [], [], []],
+      scores: [0, 0, 0, 0],
+      seat: 0,
+      seatWind: .east,
+      roundWind: .east,
+      unseen: { _ in 4 },
+      drawn: .character6
+    )
+    #expect(short.fanLine.contains("只有"))
+    #expect(short.fanLine.contains("不够 8"))
+  }
+
+  @Test func lessonWalksChowPungAndEightFanMinimum() throws {
+    var state = TableLesson.opening()
+    #expect(TableLesson.prompt(state: state).contains("吃"))
+    let one = state.players[3].concealed.first { $0.kind == .character1 }!
+    try state.apply(.discard(seat: 3, tile: one))
+    let chow = state.legalChows(seat: 0, discard: .character1, discarder: 3)
+    #expect(chow.contains([.character1, .character2, .character3]))
+    try state.apply(.resolveClaims([
+      Claim(seat: 0, type: .chow, chowTiles: [.character1, .character2, .character3])
+    ]))
+    try discardScripted(&state, seat: 0)
+    try state.apply(.resolveClaims([]))
+    try playSeat(&state, seat: 1)
+    try playSeat(&state, seat: 2)
+    try playSeat(&state, seat: 3)
+    try state.apply(.draw(seat: 0))
+    let short = WinContextBuilder.selfDraw(state: state, seat: 0, roundWind: .east, seatWind: .east)
+    let shortScore = MCRScorer.score(short!)
+    #expect(shortScore?.isLegalWin == false)
+    #expect(WinContextBuilder.selfDrawScore(
+      state: state, seat: 0, roundWind: .east, seatWind: .east) == nil)
+    #expect(TableLesson.prompt(state: state).contains("不够 8"))
+    try discardScripted(&state, seat: 0)
+    try state.apply(.resolveClaims([]))
+    try state.apply(.draw(seat: 1))
+    try discardScripted(&state, seat: 1)
+    #expect(state.canPung(seat: 0, discard: .east))
+    try state.apply(.resolveClaims([Claim(seat: 0, type: .pung)]))
+    try discardScripted(&state, seat: 0)
+    try state.apply(.resolveClaims([]))
+    try playSeat(&state, seat: 1)
+    try playSeat(&state, seat: 2)
+    try playSeat(&state, seat: 3)
+    try state.apply(.draw(seat: 0))
+    #expect(WinContextBuilder.selfDrawScore(
+      state: state, seat: 0, roundWind: .east, seatWind: .east) != nil)
+    #expect(TableLesson.prompt(state: state).contains("和"))
+  }
+
+  @Test func specialHandsStopWhenTheCompletingTileIsDiscarded() {
+    for puzzle in [CareerPuzzle.sevenPairs, .honorsKnitted, .knittedStraight] {
+      #expect(CareerDeals.endsOnDiscard(puzzle))
+      #expect(CareerDeals.opening(puzzle).wall.remainingCount < 20)
+    }
+  }
+
+  private func playSeat(_ state: inout GameState, seat: Int) throws {
+    try state.apply(.draw(seat: seat))
+    try discardScripted(&state, seat: seat)
+    if case .awaitingResponses = state.phase {
+      try state.apply(.resolveClaims([]))
+    }
+  }
+
+  private func discardScripted(_ state: inout GameState, seat: Int) throws {
+    let count = state.events.reduce(0) { total, event in
+      if case .discarded(let discarded, _) = event, discarded == seat { return total + 1 }
+      return total
+    }
+    let kind = TableLesson.scriptedDiscard(
+      seat: seat, hand: state.players[seat].concealed.map(\.kind), discardsSoFar: count)!
+    let tile = state.players[seat].concealed.first { $0.kind == kind }!
+    try state.apply(.discard(seat: seat, tile: tile))
+  }
+
+  private func winningHand(winning: TileKind) -> [Tile] {
+    [
+      Tile(kind: .character1, copy: 0), Tile(kind: .character1, copy: 1),
+      Tile(kind: .character1, copy: 2),
+      Tile(kind: .character2, copy: 0), Tile(kind: .character2, copy: 1),
+      Tile(kind: .character2, copy: 2),
+      Tile(kind: .character3, copy: 0), Tile(kind: .character3, copy: 1),
+      Tile(kind: .character3, copy: 2),
+      Tile(kind: .dot9, copy: 0), Tile(kind: .dot9, copy: 1),
+      Tile(kind: .bamboo4, copy: 0), Tile(kind: .bamboo6, copy: 0),
+      Tile(kind: winning, copy: 3),
+    ]
+  }
+
   private func sample(
     mode: PlayMode,
     winner: Int?,

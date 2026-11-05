@@ -130,8 +130,20 @@ public struct AIInformationSet: Codable, Sendable {
   public var visibleTileCounts: [TileKind: Int] {
     var counts: [TileKind: Int] = [:]
     for tile in discards.flatMap({ $0 }) { counts[tile, default: 0] += 1 }
-    for tile in publicMelds.flatMap({ $0 }).flatMap(\.tiles) { counts[tile, default: 0] += 1 }
+    for meld in publicMelds.flatMap({ $0 }) where meld.type != .concealedKong {
+      for tile in meld.tiles { counts[tile, default: 0] += 1 }
+    }
     for tile in exposedFlowers.flatMap({ $0 }) { counts[tile, default: 0] += 1 }
+    return counts
+  }
+
+  /// Table tiles plus this player's own hand and own concealed kongs.
+  public var seenTileCounts: [TileKind: Int] {
+    var counts = visibleTileCounts
+    for tile in ownTiles { counts[tile, default: 0] += 1 }
+    for meld in ownMelds where meld.type == .concealedKong {
+      for tile in meld.tiles { counts[tile, default: 0] += 1 }
+    }
     return counts
   }
 }

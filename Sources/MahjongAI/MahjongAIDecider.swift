@@ -82,6 +82,42 @@ public enum MahjongAIDecider {
     )
   }
 
+  /// Picks a chow by the efficiency of the tiles left in hand, not by option order.
+  public static func chooseChow(
+    options: [[TileKind]],
+    discardedTile: TileKind,
+    information: AIInformationSet,
+    profile: OpponentProfile,
+    decisionSeed: UInt64
+  ) -> [TileKind]? {
+    let ranked = options.compactMap { run -> (run: [TileKind], efficiency: Int)? in
+      var remaining = information.ownTiles
+      var skippedDiscard = false
+      for tile in run {
+        if tile == discardedTile, !skippedDiscard {
+          skippedDiscard = true
+          continue
+        }
+        guard let index = remaining.firstIndex(of: tile) else { return nil }
+        remaining.remove(at: index)
+      }
+      guard skippedDiscard else { return nil }
+      return (run, HandEfficiency.score(remaining))
+    }.sorted { lhs, rhs in
+      if lhs.efficiency != rhs.efficiency { return lhs.efficiency > rhs.efficiency }
+      return lhs.run.map(\.rawValue).lexicographicallyPrecedes(rhs.run.map(\.rawValue))
+    }
+    return ranked.first { candidate in
+      shouldClaim(
+        .chow(candidate.run),
+        discardedTile: discardedTile,
+        information: information,
+        profile: profile,
+        decisionSeed: decisionSeed
+      )
+    }?.run
+  }
+
   public static func shouldClaim(
     _ claim: AIClaimChoice,
     discardedTile: TileKind,
@@ -89,7 +125,14 @@ public enum MahjongAIDecider {
     profile: OpponentProfile,
     decisionSeed: UInt64
   ) -> Bool {
-    if case .exposedKong = claim { return true }
+    if case .exposedKong = claim {
+      return KongPolicy.allows(
+        kind: discardedTile,
+        removing: 3,
+        tiles: information.ownTiles,
+        meldCount: information.ownMelds.count
+      )
+    }
 
     let dominantSuit = FanPlanner.dominantSuit(information.ownTiles)
     let followsBigHandPlan =
@@ -100,7 +143,7 @@ public enum MahjongAIDecider {
     case .beginner:
       let roll = stableNoise(seed: decisionSeed, salt: discardedTile.rawValue) % 100
       return Int(roll) < (aggressive ? 76 : 48)
-    case .normal:
+      case .normal:
       switch claim {
       case .pung:
         return discardedTile.isHonor || aggressive
@@ -111,7 +154,7 @@ public enum MahjongAIDecider {
             information.ownTiles.filter { $0 == tile }.count >= 2
           }
       case .exposedKong:
-        return true
+        return false
       }
     case .expert:
       if profile.personality.archetype == .bigHand && !followsBigHandPlan {
@@ -211,7 +254,7 @@ private enum HandEfficiency {
 }
 private enum DangerEstimator {
   static func score(tile: TileKind, information: AIInformationSet) -> Int {
-    let visible = information.visibleTileCounts[tile, default: 0]
+    let visible = information.seenTileCounts[tile, default: 0]
     if visible >= 3 { return 0 }
 
     var maximum = 0
