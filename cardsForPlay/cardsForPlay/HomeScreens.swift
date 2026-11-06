@@ -202,7 +202,7 @@ struct AppearancePage: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 8) {
         pageHeader("外观", model: model, backTitle: "返回更多") { model.route = .more }
-        Text("牌桌、牌背、角色和程序音乐。生涯星级和 Boss 解锁，不改规则。")
+        Text("牌桌、牌背和角色。背景音乐在设置里开关，不改规则。")
           .font(.caption)
           .foregroundStyle(.secondary)
         ForEach(CosmeticCatalog.items(career: model.library.career)) { item in
@@ -268,6 +268,11 @@ struct SettingsPage: View {
           .font(.caption)
           .foregroundStyle(.secondary)
         Text("声音").font(.headline)
+        Toggle("背景音乐", isOn: Binding(
+          get: { model.library.audio.backgroundMusicEnabled },
+          set: { model.setBackgroundMusic($0) }
+        ))
+        .accessibilityIdentifier("settings-background-music")
         volumeSlider("音乐", value: model.library.audio.music) {
           model.updateAudioVolume(\.music, $0)
         }
@@ -277,7 +282,7 @@ struct SettingsPage: View {
         volumeSlider("语音", value: model.library.audio.voice) {
           model.updateAudioVolume(\.voice, $0)
         }
-        Text("音乐是程序生成的短循环，滑到 0 即关闭。没有外链曲库。")
+        Text("背景音乐默认打开。主菜单和牌桌是同一条循环。关掉立刻停，再打开从刚才接着播。")
           .font(.caption)
           .foregroundStyle(.secondary)
         Toggle("触觉", isOn: Binding(

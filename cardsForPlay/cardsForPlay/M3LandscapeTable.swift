@@ -637,6 +637,11 @@ struct M3LandscapeTable: View {
             .font(.caption)
         }
         Section("声音") {
+          Toggle("背景音乐", isOn: Binding(
+            get: { model.library.audio.backgroundMusicEnabled },
+            set: { model.setBackgroundMusic($0) }
+          ))
+          .accessibilityIdentifier("settings-background-music")
           volumeSlider("音乐", value: model.library.audio.music) {
             model.updateAudioVolume(\.music, $0)
           }
@@ -650,7 +655,7 @@ struct M3LandscapeTable: View {
             get: { model.library.audio.hapticsEnabled },
             set: { model.updateHaptics($0) }
           ))
-          Text("音乐是程序生成的短循环，把音乐滑到 0 即关闭。没有外链曲库。音效和普通话短语音分开调节。")
+          Text("背景音乐默认打开。关掉立刻停，再打开从刚才接着播。滑杆只调大小。音效和语音分开调节。")
             .font(.caption)
         }
         Button("开始新一局", role: .destructive) {

@@ -72,8 +72,8 @@ public enum CosmeticCatalog {
     ("character-jingchuan", .character, "静川", "击败静川后解锁。", false),
     ("character-moheng", .character, "墨衡", "击败墨衡后解锁。", false),
     ("character-xuance", .character, "玄策", "击败玄策后解锁。", false),
-    ("music-basic", .music, "茶馆曲", "程序生成的短循环，没有外链曲库。", true),
-    ("music-calm", .music, "湖畔曲", "击败静川后换成更慢的程序旋律。", false),
+    ("music-basic", .music, "茶馆曲", "默认装扮。背景音乐是同一条循环，在设置里开关。", true),
+    ("music-calm", .music, "湖畔曲", "击败静川后解锁。背景音乐仍是同一条循环，不会另换一首。", false),
     ("voice-fans", .music, "番种短语音", "击败墨衡后，和牌时补报一个番种名。", false),
   ]
 }

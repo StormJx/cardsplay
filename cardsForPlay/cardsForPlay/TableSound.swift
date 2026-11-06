@@ -10,33 +10,60 @@ final class TableSound {
   private var lastSpeech = Date.distantPast
   private var music: AVAudioPlayer?
   private var effect: AVAudioPlayer?
-  private var musicReady = false
-  private var calmMusic = false
+  private var wantsMusic = false
+  private var inForeground = true
 
   private init() {
+    configureSession()
+  }
+
+  /// One bundled loop for the menu and the table. Sync never restarts it.
+  /// `table-bgm.wav` is an original CC0 loop; see `table-bgm.txt`.
+  func sync(_ settings: AudioSettings, calm: Bool = false) {
+    _ = calm
+    wantsMusic = settings.backgroundMusicEnabled
+    guard wantsMusic else {
+      music?.pause()
+      return
+    }
+    loadTrackIfNeeded()
+    applyVolume(settings)
+    guard inForeground else { return }
+    resumeIfNeeded()
+  }
+
+  func setForeground(_ active: Bool) {
+    inForeground = active
+    if !active {
+      music?.pause()
+      return
+    }
+    guard wantsMusic else { return }
+    configureSession()
+    resumeIfNeeded()
+  }
+
+  private func configureSession() {
     try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
     try? AVAudioSession.sharedInstance().setActive(true)
   }
 
-  func sync(_ settings: AudioSettings, calm: Bool = false) {
-    if calm != calmMusic {
-      calmMusic = calm
-      music?.stop()
-      music = nil
-      musicReady = false
-    }
-    guard settings.musicOn else {
-      music?.stop()
-      return
-    }
-    if !musicReady {
-      music = try? AVAudioPlayer(data: Self.toneData(calm: calm))
-      music?.numberOfLoops = -1
-      music?.prepareToPlay()
-      musicReady = music != nil
-    }
-    music?.volume = Float(min(1, max(0, settings.music))) * 0.45
-    if music?.isPlaying != true { music?.play() }
+  private func loadTrackIfNeeded() {
+    guard music == nil else { return }
+    guard let url = Bundle.main.url(forResource: "table-bgm", withExtension: "wav") else { return }
+    music = try? AVAudioPlayer(contentsOf: url)
+    music?.numberOfLoops = -1
+    music?.prepareToPlay()
+  }
+
+  private func applyVolume(_ settings: AudioSettings) {
+    let slider = Float(min(1, max(0, settings.music)))
+    music?.volume = min(0.42, slider * 1.5)
+  }
+
+  private func resumeIfNeeded() {
+    guard let music, !music.isPlaying else { return }
+    music.play()
   }
 
   func speak(_ text: String, settings: AudioSettings) {
@@ -68,23 +95,6 @@ final class TableSound {
     effect = try? AVAudioPlayer(data: Self.blipData(frequency: frequency, seconds: seconds))
     effect?.volume = Float(min(1, max(0, settings.effects)))
     effect?.play()
-  }
-
-  private static func toneData(calm: Bool) -> Data {
-    let sampleRate = 8_000
-    let notes = calm ? [196.0, 220.0, 247.0, 196.0] : [262.0, 294.0, 330.0, 392.0, 330.0]
-    let count = sampleRate * 4
-    var pcm = Data(capacity: count * 2)
-    for index in 0..<count {
-      let time = Double(index) / Double(sampleRate)
-      let step = calm ? 1.0 : 0.7
-      let note = notes[Int(time / step) % notes.count]
-      let envelope = 0.55 + 0.45 * sin(2 * Double.pi * time / step)
-      let sample = sin(2 * Double.pi * note * time) * 0.16 * envelope
-      var value = Int16(max(-1, min(1, sample)) * 12_000)
-      withUnsafeBytes(of: &value) { pcm.append(contentsOf: $0) }
-    }
-    return wav(pcm, sampleRate: sampleRate)
   }
 
   private static func blipData(frequency: Double, seconds: Double) -> Data {

@@ -455,6 +455,7 @@ struct ProgressTests {
     let json = #"{"music":0.2,"effects":0.4,"voice":0.8}"#
     let audio = try! JSONDecoder().decode(AudioSettings.self, from: Data(json.utf8))
     #expect(audio.hapticsEnabled)
+    #expect(audio.backgroundMusicEnabled)
     var career = CareerProgress()
     career.bestStars["2-10"] = 1
     let items = CosmeticCatalog.items(career: career)

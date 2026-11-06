@@ -1481,6 +1481,12 @@ final class PrototypeGame: ObservableObject {
     updateAudio(audio)
   }
 
+  func setBackgroundMusic(_ enabled: Bool) {
+    var audio = library.audio
+    audio.backgroundMusic = enabled
+    updateAudio(audio)
+  }
+
   func setPracticeSwitch(_ key: WritableKeyPath<PracticeSwitches, Bool>, _ value: Bool) {
     var switches = practiceSwitches
     switches[keyPath: key] = value

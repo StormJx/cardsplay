@@ -46,6 +46,11 @@ struct MahjongGameView: View {
     .preferredColorScheme(.dark)
     .onChange(of: scenePhase) { _, phase in
       if phase != .active { model.saveForBackground() }
+      if phase == .background {
+        TableSound.shared.setForeground(false)
+      } else if phase == .active {
+        TableSound.shared.setForeground(true)
+      }
     }
     .onAppear {
       TableSound.shared.sync(model.library.audio, calm: model.musicIsCalm)

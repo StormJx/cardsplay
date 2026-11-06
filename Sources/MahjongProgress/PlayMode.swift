@@ -34,17 +34,27 @@ public struct AudioSettings: Codable, Equatable, Sendable {
   public var voice: Double
 
   public var haptics: Bool?
+  /// Nil stays on, so older saves keep the default until the switch is used.
+  public var backgroundMusic: Bool?
 
-  public init(music: Double = 0.25, effects: Double = 0.8, voice: Double = 1, haptics: Bool? = nil) {
+  public init(
+    music: Double = 0.25,
+    effects: Double = 0.8,
+    voice: Double = 1,
+    haptics: Bool? = nil,
+    backgroundMusic: Bool? = nil
+  ) {
     self.music = music
     self.effects = effects
     self.voice = voice
     self.haptics = haptics
+    self.backgroundMusic = backgroundMusic
   }
 
   public var hapticsEnabled: Bool { haptics ?? true }
+  public var backgroundMusicEnabled: Bool { backgroundMusic ?? true }
 
-  public var musicOn: Bool { music > 0.01 }
+  public var musicOn: Bool { backgroundMusicEnabled }
   public var effectsOn: Bool { effects > 0.01 }
   public var voiceOn: Bool { voice > 0.01 }
 }
